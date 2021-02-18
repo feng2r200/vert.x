@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -13,6 +13,7 @@ package io.vertx.it;
 
 import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpClientOptions;
+import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.impl.VertxInternal;
 import io.vertx.core.net.OpenSSLEngineOptions;
@@ -47,11 +48,13 @@ public class NettyCompatTest extends VertxTestBase {
               .setSsl(true)
               .setSslEngineOptions(new OpenSSLEngineOptions())
               .setTrustStoreOptions(Trust.SERVER_JKS.get()));
-          client.getNow(8443, "localhost", "/somepath", onSuccess(resp -> {
-            resp.bodyHandler(buff -> {
-              assertEquals("OK", buff.toString());
-              testComplete();
-            });
+          client.request(HttpMethod.GET, 8443, "localhost", "/somepath", onSuccess(req -> {
+            req.send(onSuccess(resp -> {
+              resp.bodyHandler(buff -> {
+                assertEquals("OK", buff.toString());
+                testComplete();
+              });
+            }));
           }));
         }));
     await();

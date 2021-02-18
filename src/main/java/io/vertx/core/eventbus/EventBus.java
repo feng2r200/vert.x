@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -13,11 +13,11 @@ package io.vertx.core.eventbus;
 
 import io.vertx.codegen.annotations.Fluent;
 import io.vertx.codegen.annotations.GenIgnore;
+import io.vertx.codegen.annotations.Nullable;
 import io.vertx.codegen.annotations.VertxGen;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
-import io.vertx.core.Promise;
 import io.vertx.core.metrics.Measured;
 
 /**
@@ -45,7 +45,7 @@ public interface EventBus extends Measured {
    * @return a reference to this, so the API can be used fluently
    */
   @Fluent
-  EventBus send(String address, Object message);
+  EventBus send(String address, @Nullable Object message);
 
   /**
    * Like {@link #send(String, Object)} but specifying {@code options} that can be used to configure the delivery.
@@ -56,7 +56,7 @@ public interface EventBus extends Measured {
    * @return a reference to this, so the API can be used fluently
    */
   @Fluent
-  EventBus send(String address, Object message, DeliveryOptions options);
+  EventBus send(String address, @Nullable Object message, DeliveryOptions options);
 
   /**
    * Sends a message and and specify a {@code replyHandler} that will be called if the recipient
@@ -70,15 +70,15 @@ public interface EventBus extends Measured {
    * @return a reference to this, so the API can be used fluently
    */
   @Fluent
-  <T> EventBus request(String address, Object message, Handler<AsyncResult<Message<T>>> replyHandler);
+  default <T> EventBus request(String address, @Nullable Object message, Handler<AsyncResult<Message<T>>> replyHandler) {
+    return request(address, message, new DeliveryOptions(), replyHandler);
+  }
 
   /**
    * Like {@link #request(String, Object, Handler)} but returns a {@code Future} of the asynchronous result
    */
-  default <T> Future<Message<T>> request(String address, Object message) {
-    Promise<Message<T>> promise = Promise.promise();
-    request(address, message, promise);
-    return promise.future();
+  default <T> Future<Message<T>> request(String address, @Nullable Object message) {
+    return request(address, message, new DeliveryOptions());
   }
 
   /**
@@ -91,16 +91,16 @@ public interface EventBus extends Measured {
    * @return a reference to this, so the API can be used fluently
    */
   @Fluent
-  <T> EventBus request(String address, Object message, DeliveryOptions options, Handler<AsyncResult<Message<T>>> replyHandler);
+  default <T> EventBus request(String address, @Nullable Object message, DeliveryOptions options, Handler<AsyncResult<Message<T>>> replyHandler) {
+    Future<Message<T>> reply = request(address, message, options);
+    reply.onComplete(replyHandler);
+    return this;
+  }
 
   /**
    * Like {@link #request(String, Object, DeliveryOptions, Handler)} but returns a {@code Future} of the asynchronous result
    */
-  default <T> Future<Message<T>> request(String address, Object message, DeliveryOptions options) {
-    Promise<Message<T>> promise = Promise.promise();
-    request(address, message, options, promise);
-    return promise.future();
-  }
+  <T> Future<Message<T>> request(String address, @Nullable Object message, DeliveryOptions options);
 
   /**
    * Publish a message.<p>
@@ -112,7 +112,7 @@ public interface EventBus extends Measured {
    *
    */
   @Fluent
-  EventBus publish(String address, Object message);
+  EventBus publish(String address, @Nullable Object message);
 
   /**
    * Like {@link #publish(String, Object)} but specifying {@code options} that can be used to configure the delivery.
@@ -123,7 +123,7 @@ public interface EventBus extends Measured {
    * @return a reference to this, so the API can be used fluently
    */
   @Fluent
-  EventBus publish(String address, Object message, DeliveryOptions options);
+  EventBus publish(String address, @Nullable Object message, DeliveryOptions options);
 
   /**
    * Create a message consumer against the specified address.
@@ -255,22 +255,6 @@ public interface EventBus extends Measured {
    */
   @GenIgnore
   EventBus unregisterDefaultCodec(Class clazz);
-
-  /**
-   * Start the event bus. This would not normally be called in user code
-   *
-   * @param completionHandler  handler will be called when event bus is started
-   */
-  @GenIgnore
-  void start(Handler<AsyncResult<Void>> completionHandler);
-
-  /**
-   * Close the event bus and release any resources held. This would not normally be called in user code
-   *
-   * @param completionHandler may be {@code null}
-   */
-  @GenIgnore
-  void close(Handler<AsyncResult<Void>> completionHandler);
 
   /**
    * Add an interceptor that will be called whenever a message is sent from Vert.x

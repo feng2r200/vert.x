@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2018 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -13,10 +13,10 @@ package io.vertx.core.http.impl;
 import io.netty.handler.codec.http.*;
 import io.vertx.core.http.HttpHeaders;
 import io.vertx.core.http.HttpServerOptions;
-import io.vertx.core.http.impl.headers.VertxHttpHeaders;
+import io.vertx.core.http.impl.headers.HeadersMultiMap;
 
 /**
- * A request decoder using {@link VertxHttpHeaders} which is faster than {@code DefaultHttpHeaders} used by the super class.
+ * A request decoder using {@link HeadersMultiMap} which is faster than {@code DefaultHttpHeaders} used by the super class.
  */
 public class VertxHttpRequestDecoder extends HttpRequestDecoder {
 
@@ -35,6 +35,6 @@ public class VertxHttpRequestDecoder extends HttpRequestDecoder {
       HttpVersion.valueOf(initialLine[2]),
       HttpMethod.valueOf(initialLine[0]),
       initialLine[1],
-      new VertxHttpHeaders());
+      HeadersMultiMap.httpHeaders());
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -17,6 +17,7 @@ import io.vertx.core.impl.VertxInternal;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.metrics.MetricsOptions;
 import io.vertx.core.metrics.impl.DummyVertxMetrics;
+import io.vertx.core.spi.VertxServiceProvider;
 import io.vertx.test.core.TestUtils;
 import io.vertx.test.core.VertxTestBase;
 import io.vertx.test.fakemetrics.FakeVertxMetrics;
@@ -91,11 +92,13 @@ public class MetricsOptionsTest extends VertxTestBase {
   @Test
   public void testMetricsFromServiceLoader() {
     vertx.close();
-    VertxOptions options = new VertxOptions().setMetricsOptions(new MetricsOptions().setEnabled(true));
+    MetricsOptions metricsOptions = new MetricsOptions().setEnabled(true);
+    VertxOptions options = new VertxOptions().setMetricsOptions(metricsOptions);
     vertx = createVertxLoadingMetricsFromMetaInf(options, "io.vertx.test.fakemetrics.FakeMetricsFactory");
     VertxMetrics metrics = ((VertxInternal) vertx).metricsSPI();
     assertNotNull(metrics);
     assertTrue(metrics instanceof FakeVertxMetrics);
+    assertEquals(metricsOptions.isEnabled(), ((FakeVertxMetrics)metrics).options().isEnabled());
   }
 
   @Test
@@ -122,7 +125,7 @@ public class MetricsOptionsTest extends VertxTestBase {
     return new URLClassLoader(new URL[0], Thread.currentThread().getContextClassLoader()) {
       @Override
       public Enumeration<URL> findResources(String name) throws IOException {
-        if (name.equals("META-INF/services/io.vertx.core.spi.VertxMetricsFactory")) {
+        if (name.equals("META-INF/services/" + VertxServiceProvider.class.getName())) {
           File f = File.createTempFile("vertx", ".txt");
           f.deleteOnExit();
           Files.write(f.toPath(), factoryFqn.getBytes());

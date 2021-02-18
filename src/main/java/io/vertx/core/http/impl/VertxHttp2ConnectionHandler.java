@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -20,6 +20,7 @@ import io.netty.handler.codec.http2.*;
 import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.util.concurrent.EventExecutor;
+import io.netty.util.concurrent.FutureListener;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -77,7 +78,8 @@ class VertxHttp2ConnectionHandler<C extends Http2ConnectionBase> extends Http2Co
    * @return this
    */
   public VertxHttp2ConnectionHandler<C> removeHandler(Handler<C> handler) {
-    this.removeHandler = handler;
+    removeHandler = handler;
+    connection = null;
     return this;
   }
 
@@ -85,6 +87,7 @@ class VertxHttp2ConnectionHandler<C extends Http2ConnectionBase> extends Http2Co
   public void handlerAdded(ChannelHandlerContext ctx) throws Exception {
     super.handlerAdded(ctx);
     chctx = ctx;
+    connection = connectionFactory.apply(this);
   }
 
   @Override
@@ -186,49 +189,14 @@ class VertxHttp2ConnectionHandler<C extends Http2ConnectionBase> extends Http2Co
 
   //
 
-  void writeHeaders(Http2Stream stream, Http2Headers headers, boolean end, int streamDependency, short weight, boolean exclusive, Handler<AsyncResult<Void>> handler) {
-    EventExecutor executor = chctx.executor();
-    ChannelPromise promise = createPromise(handler);
-    if (executor.inEventLoop()) {
-      _writeHeaders(stream, headers, end, streamDependency, weight, exclusive, promise);
-    } else {
-      executor.execute(() -> {
-        _writeHeaders(stream, headers, end, streamDependency, weight, exclusive, promise);
-      });
-    }
-  }
-
-  private void _writeHeaders(Http2Stream stream, Http2Headers headers, boolean end, int streamDependency, short weight, boolean exclusive, ChannelPromise promise) {
+  void writeHeaders(Http2Stream stream, Http2Headers headers, boolean end, int streamDependency, short weight, boolean exclusive, FutureListener<Void> listener) {
+    ChannelPromise promise = listener == null ? chctx.voidPromise() : chctx.newPromise().addListener(listener);
     encoder().writeHeaders(chctx, stream.id(), headers, streamDependency, weight, exclusive, 0, end, promise);
+    chctx.channel().flush();
   }
 
-  private ChannelPromise createPromise(Handler<AsyncResult<Void>> handler) {
-    ChannelPromise promise = chctx.newPromise();
-    if (handler != null) {
-      promise.addListener((future) -> {
-        if(future.isSuccess()) {
-          handler.handle(Future.succeededFuture());
-        } else {
-          handler.handle(Future.failedFuture(future.cause()));
-        }
-      });
-    }
-    return promise;
-  }
-
-  void writeData(Http2Stream stream, ByteBuf chunk, boolean end, Handler<AsyncResult<Void>> handler) {
-    EventExecutor executor = chctx.executor();
-    ChannelPromise promise = createPromise(handler);
-    if (executor.inEventLoop()) {
-      _writeData(stream, chunk, end, promise);
-    } else {
-      executor.execute(() -> {
-        _writeData(stream, chunk, end, promise);
-      });
-    }
-  }
-
-  private void _writeData(Http2Stream stream, ByteBuf chunk, boolean end, ChannelPromise promise) {
+  void writeData(Http2Stream stream, ByteBuf chunk, boolean end, FutureListener<Void> listener) {
+    ChannelPromise promise = listener == null ? chctx.voidPromise() : chctx.newPromise().addListener(listener);
     encoder().writeData(chctx, stream.id(), chunk, 0, end, promise);
     Http2RemoteFlowController controller = encoder().flowController();
     if (!controller.isWritable(stream) || end) {
@@ -274,33 +242,11 @@ class VertxHttp2ConnectionHandler<C extends Http2ConnectionBase> extends Http2Co
   }
 
   void writeFrame(Http2Stream stream, byte type, short flags, ByteBuf payload) {
-    EventExecutor executor = chctx.executor();
-    if (executor.inEventLoop()) {
-      _writeFrame(stream, type, flags, payload);
-    } else {
-      executor.execute(() -> {
-        _writeFrame(stream, type, flags, payload);
-      });
-    }
-  }
-
-  private void _writeFrame(Http2Stream stream, byte type, short flags, ByteBuf payload) {
     encoder().writeFrame(chctx, type, stream.id(), new Http2Flags(flags), payload, chctx.newPromise());
     chctx.flush();
   }
 
   void writeReset(int streamId, long code) {
-    EventExecutor executor = chctx.executor();
-    if (executor.inEventLoop()) {
-      _writeReset(streamId, code);
-    } else {
-      executor.execute(() -> {
-        _writeReset(streamId, code);
-      });
-    }
-  }
-
-  private void _writeReset(int streamId, long code) {
     encoder().writeRstStream(chctx, streamId, code, chctx.newPromise());
     chctx.flush();
   }
@@ -359,6 +305,10 @@ class VertxHttp2ConnectionHandler<C extends Http2ConnectionBase> extends Http2Co
     }
   }
 
+  int maxConcurrentStreams() {
+    return connection().local().maxActiveStreams();
+  }
+
   private void _writePushPromise(int streamId, int promisedStreamId, Http2Headers headers, ChannelPromise promise) {
     encoder().writePushPromise(chctx, streamId, promisedStreamId, headers, 0, promise);
   }
@@ -377,7 +327,6 @@ class VertxHttp2ConnectionHandler<C extends Http2ConnectionBase> extends Http2Co
 
   @Override
   public void onHeadersRead(ChannelHandlerContext ctx, int streamId, Http2Headers headers, int streamDependency, short weight, boolean exclusive, int padding, boolean endOfStream) throws Http2Exception {
-    assert connection != null;
     connection.onHeadersRead(ctx, streamId, headers, streamDependency, weight, exclusive, padding, endOfStream);
   }
 
@@ -398,7 +347,6 @@ class VertxHttp2ConnectionHandler<C extends Http2ConnectionBase> extends Http2Co
 
   @Override
   public void onSettingsRead(ChannelHandlerContext ctx, Http2Settings settings) throws Http2Exception {
-    connection = connectionFactory.apply(this);
     if (useDecompressor) {
       decoder().frameListener(new DelegatingDecompressorFrameListener(decoder().connection(), connection));
     } else {
@@ -419,6 +367,9 @@ class VertxHttp2ConnectionHandler<C extends Http2ConnectionBase> extends Http2Co
         connection.onHeadersRead(ctx, 1, frame.headers(), frame.padding(), frame.isEndStream());
       } else if (msg instanceof Http2DataFrame) {
         Http2DataFrame frame = (Http2DataFrame) msg;
+        Http2LocalFlowController controller = decoder().flowController();
+        Http2Stream stream = decoder().connection().stream(1);
+        controller.receiveFlowControlledFrame(stream, frame.content(), frame.padding(), frame.isEndStream());
         connection.onDataRead(ctx, 1, frame.content(), frame.padding(), frame.isEndStream());
       }
     } else {
@@ -455,7 +406,7 @@ class VertxHttp2ConnectionHandler<C extends Http2ConnectionBase> extends Http2Co
   public void onUnknownFrame(ChannelHandlerContext ctx, byte frameType, int streamId, Http2Flags flags, ByteBuf payload) throws Http2Exception {
     throw new UnsupportedOperationException();
   }
-  
+
   private void _writePriority(Http2Stream stream, int streamDependency, short weight, boolean exclusive) {
       encoder().writePriority(chctx, stream.id(), streamDependency, weight, exclusive, chctx.newPromise());
   }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 Red Hat, Inc. and others
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -11,9 +11,9 @@
 
 package io.vertx.core;
 
-import io.vertx.core.Verticle;
-import io.vertx.core.Vertx;
 import io.vertx.core.spi.VerticleFactory;
+
+import java.util.concurrent.Callable;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
@@ -30,8 +30,8 @@ public class ClasspathVerticleFactory implements VerticleFactory {
   }
 
   @Override
-  public Verticle createVerticle(String verticleName, ClassLoader classLoader) throws Exception {
-    return null;
+  public void createVerticle(String verticleName, ClassLoader classLoader, Promise<Callable<Verticle>> promise) {
+    promise.complete();
   }
 
   @Override

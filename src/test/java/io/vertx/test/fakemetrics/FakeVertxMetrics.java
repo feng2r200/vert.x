@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -16,6 +16,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.datagram.DatagramSocketOptions;
 import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.HttpServerOptions;
+import io.vertx.core.metrics.MetricsOptions;
 import io.vertx.core.net.NetClientOptions;
 import io.vertx.core.net.NetServerOptions;
 import io.vertx.core.net.SocketAddress;
@@ -26,7 +27,20 @@ import io.vertx.core.spi.metrics.*;
  */
 public class FakeVertxMetrics extends FakeMetricsBase implements VertxMetrics {
 
+  private final MetricsOptions options;
   private volatile Vertx vertx;
+
+  public FakeVertxMetrics(MetricsOptions options) {
+    this.options = options;
+  }
+
+  public FakeVertxMetrics() {
+    this.options = new MetricsOptions();
+  }
+
+  public MetricsOptions options() {
+    return options;
+  }
 
   public Vertx vertx() {
     return vertx;
@@ -45,7 +59,7 @@ public class FakeVertxMetrics extends FakeMetricsBase implements VertxMetrics {
     return new FakeHttpServerMetrics();
   }
 
-  public HttpClientMetrics<?, ?, ?, ?, Void> createHttpClientMetrics(HttpClientOptions options) {
+  public HttpClientMetrics<?, ?, ?, Void> createHttpClientMetrics(HttpClientOptions options) {
     return new FakeHttpClientMetrics(options.getMetricsName());
   }
 

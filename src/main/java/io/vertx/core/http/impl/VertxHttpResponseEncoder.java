@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -17,7 +17,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.codec.http.HttpResponse;
 import io.netty.handler.codec.http.HttpResponseEncoder;
-import io.vertx.core.http.impl.headers.VertxHttpHeaders;
+import io.vertx.core.http.impl.headers.HeadersMultiMap;
 import io.vertx.core.net.impl.PartialPooledByteBufAllocator;
 
 import java.util.List;
@@ -37,8 +37,8 @@ final class VertxHttpResponseEncoder extends HttpResponseEncoder {
 
   @Override
   protected void encodeHeaders(HttpHeaders headers, ByteBuf buf) {
-    if (headers instanceof VertxHttpHeaders) {
-      VertxHttpHeaders vertxHeaders = (VertxHttpHeaders) headers;
+    if (headers instanceof HeadersMultiMap) {
+      HeadersMultiMap vertxHeaders = (HeadersMultiMap) headers;
       vertxHeaders.encode(buf);
     } else {
       super.encodeHeaders(headers, buf);

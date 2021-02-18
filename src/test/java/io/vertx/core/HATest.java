@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -384,7 +384,7 @@ public class HATest extends VertxTestBase {
       .setHAEnabled(ha)
       .setClusterManager(getClusterManager());
     options.getEventBusOptions()
-      .setClustered(true).setHost("localhost");
+      .setHost("localhost");
     if (ha) {
       options.setQuorumSize(quorumSize);
       if (haGroup != null) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -235,4 +235,51 @@ public class RedeployTest extends CommandTestBase {
     }, 20000);
   }
 
+  @Test
+  public void testStartingApplicationInRedeployModeWithInlineOptions() throws IOException {
+    cli.dispatch(new Launcher(), new String[]{"run",
+      HttpTestVerticle.class.getName(), "--redeploy=**" + File.separator + "*.txt",
+      "--launcher-class=" + OptionsRecordingLauncher.class.getName(),
+      "--options", "{\"metricsOptions\":{\"enabled\":true}}"
+    });
+    assertWaitUntil(() -> {
+      try {
+        return RunCommandTest.getHttpCode() == 200;
+      } catch (IOException e) {
+        return false;
+      }
+    });
+
+    JsonObject conf = RunCommandTest.getContent().getJsonObject("conf");
+    assertThat(conf).isNotNull().isNotEmpty();
+    JsonObject vertxOptions = conf.getJsonObject(OptionsRecordingLauncher.class.getName());
+    assertThat(vertxOptions).isNotNull().isNotEmpty();
+    JsonObject metricsOptions = vertxOptions.getJsonObject("metricsOptions");
+    assertThat(metricsOptions).isNotNull().isNotEmpty();
+    assertThat(metricsOptions.getBoolean("enabled")).isEqualTo(true);
+  }
+
+  @Test
+  public void testStartingApplicationInRedeployModeWithInlineOptions2() throws IOException {
+    cli.dispatch(new Launcher(), new String[]{"run",
+      HttpTestVerticle.class.getName(), "--redeploy=**" + File.separator + "*.txt",
+      "--launcher-class=" + OptionsRecordingLauncher.class.getName(),
+      "--options={\"metricsOptions\":{\"enabled\":true}}"
+    });
+    assertWaitUntil(() -> {
+      try {
+        return RunCommandTest.getHttpCode() == 200;
+      } catch (IOException e) {
+        return false;
+      }
+    });
+
+    JsonObject conf = RunCommandTest.getContent().getJsonObject("conf");
+    assertThat(conf).isNotNull().isNotEmpty();
+    JsonObject vertxOptions = conf.getJsonObject(OptionsRecordingLauncher.class.getName());
+    assertThat(vertxOptions).isNotNull().isNotEmpty();
+    JsonObject metricsOptions = vertxOptions.getJsonObject("metricsOptions");
+    assertThat(metricsOptions).isNotNull().isNotEmpty();
+    assertThat(metricsOptions.getBoolean("enabled")).isEqualTo(true);
+  }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -24,6 +24,11 @@ public class StreamResetException extends VertxException {
 
   public StreamResetException(long code) {
     super("Stream reset: " + code, true);
+    this.code = code;
+  }
+
+  public StreamResetException(long code, Throwable cause) {
+    super("Stream reset: " + code, cause, true);
     this.code = code;
   }
 

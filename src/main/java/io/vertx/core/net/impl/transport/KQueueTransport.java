@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -37,15 +37,11 @@ class KQueueTransport extends Transport {
   }
 
   @Override
-  public SocketAddress convert(io.vertx.core.net.SocketAddress address, boolean resolved) {
-    if (address.path() != null) {
+  public SocketAddress convert(io.vertx.core.net.SocketAddress address) {
+    if (address.isDomainSocket()) {
       return new DomainSocketAddress(address.path());
     } else {
-      if (resolved) {
-        return new InetSocketAddress(address.host(), address.port());
-      } else {
-        return InetSocketAddress.createUnresolved(address.host(), address.port());
-      }
+      return super.convert(address);
     }
   }
 

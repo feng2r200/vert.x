@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -40,6 +40,7 @@ public class HttpTestBase extends VertxTestBase {
   protected HttpClient client;
   protected TestProxyBase proxy;
   protected SocketAddress testAddress;
+  protected RequestOptions requestOptions;
 
   protected HttpServerOptions createBaseServerOptions() {
     return new HttpServerOptions().setPort(DEFAULT_HTTP_PORT).setHost(DEFAULT_HTTP_HOST);
@@ -51,9 +52,14 @@ public class HttpTestBase extends VertxTestBase {
 
   public void setUp() throws Exception {
     super.setUp();
-    server = vertx.createHttpServer(createBaseServerOptions());
+    HttpServerOptions baseServerOptions = createBaseServerOptions();
+    server = vertx.createHttpServer(baseServerOptions);
     client = vertx.createHttpClient(createBaseClientOptions());
-    testAddress = SocketAddress.inetSocketAddress(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST);
+    testAddress = SocketAddress.inetSocketAddress(baseServerOptions.getPort(), baseServerOptions.getHost());
+    requestOptions = new RequestOptions()
+      .setHost(baseServerOptions.getHost())
+      .setPort(baseServerOptions.getPort())
+      .setURI(DEFAULT_TEST_URI);
   }
 
   protected void tearDown() throws Exception {

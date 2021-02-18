@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -13,7 +13,7 @@ package io.vertx.benchmarks;
 
 import io.netty.handler.codec.http.DefaultHttpHeaders;
 import io.netty.handler.codec.http.HttpHeaders;
-import io.vertx.core.http.impl.headers.VertxHttpHeaders;
+import io.vertx.core.http.impl.headers.HeadersMultiMap;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.CompilerControl;
 import org.openjdk.jmh.annotations.Scope;
@@ -33,12 +33,12 @@ public class HeadersSetBenchmark extends BenchmarkBase {
   }
 
   private HttpHeaders nettySmallHeaders;
-  private VertxHttpHeaders vertxSmallHeaders;
+  private HeadersMultiMap vertxSmallHeaders;
 
   @Setup
   public void setup() {
     nettySmallHeaders = new DefaultHttpHeaders();
-    vertxSmallHeaders = new VertxHttpHeaders();
+    vertxSmallHeaders = HeadersMultiMap.httpHeaders();
   }
 
   @Benchmark

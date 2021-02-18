@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009 Red Hat, Inc. and others
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -40,6 +40,11 @@ public class JULLogDelegateFactory implements LogDelegateFactory {
     if (System.getProperty("java.util.logging.config.file") == null) {
       loadConfig();
     }
+  }
+
+  @Override
+  public boolean isAvailable() {
+    return true;
   }
 
   public LogDelegate createDelegate(final String name) {

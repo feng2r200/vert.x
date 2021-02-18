@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -11,23 +11,77 @@
 
 package io.vertx.core.impl;
 
+import io.vertx.core.Context;
 import io.vertx.core.Handler;
 import io.vertx.core.spi.metrics.PoolMetrics;
 import io.vertx.core.spi.tracing.VertxTracer;
 
+import java.util.Objects;
+import java.util.concurrent.RejectedExecutionException;
+
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-class WorkerContext extends ContextImpl {
+public class WorkerContext extends ContextImpl {
 
-  WorkerContext(VertxInternal vertx, VertxTracer<?, ?> tracer, WorkerPool internalBlockingPool, WorkerPool workerPool, Deployment deployment,
+  WorkerContext(VertxInternal vertx,
+                VertxTracer<?, ?> tracer,
+                WorkerPool internalBlockingPool,
+                WorkerPool workerPool,
+                Deployment deployment,
+                CloseHooks closeHooks,
                 ClassLoader tccl) {
-    super(vertx, tracer, internalBlockingPool, workerPool, deployment, tccl);
+    super(vertx, tracer, vertx.getEventLoopGroup().next(), internalBlockingPool, workerPool, deployment, closeHooks, tccl);
   }
 
   @Override
-  void executeAsync(Handler<Void> task) {
-    execute(null, task);
+  void runOnContext(AbstractContext ctx, Handler<Void> action) {
+    try {
+      TaskQueue orderedTasks;
+      if (ctx instanceof DuplicatedContext) {
+        orderedTasks = ((DuplicatedContext)ctx).orderedTasks();
+      } else {
+        orderedTasks = this.orderedTasks;
+      }
+      run(ctx, orderedTasks, null, action);
+    } catch (RejectedExecutionException ignore) {
+      // Pool is already shut down
+    }
+  }
+
+  /**
+   * <ul>
+   *   <li>When the current thread is a worker thread of this context the implementation will execute the {@code task} directly</li>
+   *   <li>Otherwise the task will be scheduled on the worker thread for execution</li>
+   * </ul>
+   */
+  @Override
+  <T> void execute(AbstractContext ctx, T argument, Handler<T> task) {
+    TaskQueue orderedTasks;
+    if (ctx instanceof DuplicatedContext) {
+      orderedTasks = ((DuplicatedContext)ctx).orderedTasks();
+    } else {
+      orderedTasks = this.orderedTasks;
+    }
+    execute(orderedTasks, argument, task);
+  }
+
+  @Override
+  <T> void emit(AbstractContext ctx, T argument, Handler<T> task) {
+    TaskQueue orderedTasks;
+    if (ctx instanceof DuplicatedContext) {
+      orderedTasks = ((DuplicatedContext)ctx).orderedTasks();
+    } else {
+      orderedTasks = this.orderedTasks;
+    }
+    execute(orderedTasks, argument, arg -> {
+      ctx.dispatch(arg, task);
+    });
+  }
+
+  @Override
+  <T> void execute(AbstractContext ctx, Runnable task) {
+    execute(this, task, Runnable::run);
   }
 
   @Override
@@ -35,17 +89,11 @@ class WorkerContext extends ContextImpl {
     return false;
   }
 
-  // In the case of a worker context, the IO will always be provided on an event loop thread, not a worker thread
-  // so we need to execute it on the worker thread
-  @Override
-  <T> void execute(T value, Handler<T> task) {
-    execute(this, value ,task);
-  }
-
-  private <T> void execute(ContextInternal ctx, T value, Handler<T> task) {
+  private <T> void run(ContextInternal ctx, TaskQueue queue, T value, Handler<T> task) {
+    Objects.requireNonNull(task, "Task handler must not be null");
     PoolMetrics metrics = workerPool.metrics();
     Object queueMetric = metrics != null ? metrics.submitted() : null;
-    orderedTasks.execute(() -> {
+    queue.execute(() -> {
       Object execMetric = null;
       if (metrics != null) {
         execMetric = metrics.begin(queueMetric);
@@ -60,51 +108,30 @@ class WorkerContext extends ContextImpl {
     }, workerPool.executor());
   }
 
-  @Override
-  public <T> void schedule(T value, Handler<T> task) {
-    PoolMetrics metrics = workerPool.metrics();
-    Object metric = metrics != null ? metrics.submitted() : null;
-    orderedTasks.execute(() -> {
-      if (metrics != null) {
-        metrics.begin(metric);
-      }
-      try {
-        task.handle(value);
-      } finally {
+  private <T> void execute(TaskQueue queue, T argument, Handler<T> task) {
+    if (Context.isOnWorkerThread()) {
+      task.handle(argument);
+    } else {
+      PoolMetrics metrics = workerPool.metrics();
+      Object queueMetric = metrics != null ? metrics.submitted() : null;
+      queue.execute(() -> {
+        Object execMetric = null;
         if (metrics != null) {
-          metrics.end(metric, true);
+          execMetric = metrics.begin(queueMetric);
         }
-      }
-    }, workerPool.executor());
+        try {
+          task.handle(argument);
+        } finally {
+          if (metrics != null) {
+            metrics.end(execMetric, true);
+          }
+        }
+      }, workerPool.executor());
+    }
   }
 
-  public ContextInternal duplicate(ContextInternal in) {
-    return new Duplicated(this, in);
-  }
-
-  static class Duplicated extends ContextImpl.Duplicated<WorkerContext> {
-
-    Duplicated(WorkerContext delegate, ContextInternal other) {
-      super(delegate, other);
-    }
-
-    void executeAsync(Handler<Void> task) {
-      execute(null, task);
-    }
-
-    @Override
-    <T> void execute(T value, Handler<T> task) {
-      delegate.execute(this, value, task);
-    }
-
-    @Override
-    public boolean isEventLoopContext() {
-      return false;
-    }
-
-    @Override
-    public ContextInternal duplicate(ContextInternal context) {
-      return new Duplicated(delegate, context);
-    }
+  @Override
+  boolean inThread() {
+    return Context.isOnWorkerThread();
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -13,6 +13,9 @@ package io.vertx.test.fakemetrics;
 
 import io.vertx.core.net.SocketAddress;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -25,7 +28,9 @@ public class SocketMetric {
   public final String remoteName;
   public final AtomicBoolean connected = new AtomicBoolean(true);
   public final AtomicLong bytesRead = new AtomicLong();
+  public final List<Long> bytesReadEvents = Collections.synchronizedList(new ArrayList<>());
   public final AtomicLong bytesWritten = new AtomicLong();
+  public final List<Long> bytesWrittenEvents = Collections.synchronizedList(new ArrayList<>());
 
   public SocketMetric(SocketAddress remoteAddress, String remoteName) {
     this.remoteAddress = remoteAddress;

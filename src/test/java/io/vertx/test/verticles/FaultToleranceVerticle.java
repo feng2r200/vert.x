@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -49,11 +49,7 @@ public class FaultToleranceVerticle extends AbstractVerticle {
     Promise<Void> registrationFuture = Promise.promise();
     registrationFutures.add(registrationFuture.future());
     vertx.eventBus().consumer("ping", this::ping).completionHandler(registrationFuture);
-    CompositeFuture.all(registrationFutures).setHandler(ar -> {
-      if (ar.succeeded()) {
-        vertx.eventBus().send("control", "start");
-      }
-    });
+    CompositeFuture.all(registrationFutures).onSuccess(ar -> vertx.eventBus().send("control", "start"));
   }
 
   private void ping(Message<JsonArray> message) {

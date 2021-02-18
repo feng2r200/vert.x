@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * @author <a href="mailto:nmaurer@redhat.com">Norman Maurer</a>
  */
-public final class VertxThread extends FastThreadLocalThread implements BlockedThreadChecker.Task {
+public class VertxThread extends FastThreadLocalThread implements BlockedThreadChecker.Task {
 
   static final String DISABLE_TCCL_PROP_NAME = "vertx.disableTCCL";
   static final boolean DISABLE_TCCL = Boolean.getBoolean(DISABLE_TCCL_PROP_NAME);
@@ -74,15 +74,15 @@ public final class VertxThread extends FastThreadLocalThread implements BlockedT
   }
 
   /**
-   * Begin the dispatch of a context task.
+   * Begin the emission of a context event.
    * <p>
    * This is a low level interface that should not be used, instead {@link ContextInternal#dispatch(Object, io.vertx.core.Handler)}
    * shall be used.
    *
-   * @param context the context on which the task is dispatched on
+   * @param context the context on which the event is emitted on
    * @return the current context that shall be restored
    */
-  ContextInternal beginDispatch(ContextInternal context) {
+  ContextInternal beginEmission(ContextInternal context) {
     if (!ContextImpl.DISABLE_TIMINGS) {
       executeStart();
     }
@@ -92,14 +92,14 @@ public final class VertxThread extends FastThreadLocalThread implements BlockedT
   }
 
   /**
-   * End the dispatch of a context task.
+   * End the emission of a context task.
    * <p>
    * This is a low level interface that should not be used, instead {@link ContextInternal#dispatch(Object, io.vertx.core.Handler)}
    * shall be used.
    *
    * @param prev the previous context thread to restore, might be {@code null}
    */
-  void endDispatch(ContextInternal prev) {
+  void endEmission(ContextInternal prev) {
     // We don't unset the context after execution - this is done later when the context is closed via
     // VertxThreadFactory
     context = prev;

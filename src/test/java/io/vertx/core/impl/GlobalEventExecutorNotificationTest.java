@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 Red Hat, Inc. and others
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -14,7 +14,6 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelFactory;
 import io.netty.channel.ServerChannel;
 import io.vertx.core.Vertx;
-import io.vertx.core.VertxOptions;
 import io.vertx.core.net.NetClientOptions;
 import io.vertx.core.net.ProxyOptions;
 import io.vertx.core.net.ProxyType;
@@ -54,14 +53,14 @@ public class GlobalEventExecutorNotificationTest extends AsyncTestBase {
 
   private void testConnectErrorNotifiesOnEventLoop(NetClientOptions options) {
     RuntimeException cause = new RuntimeException();
-    vertx = VertxImpl.vertx(new VertxOptions(), new Transport() {
+    vertx = new VertxBuilder().transport(new Transport() {
       @Override
       public ChannelFactory<? extends Channel> channelFactory(boolean domainSocket) {
         return (ChannelFactory<Channel>) () -> {
           throw cause;
         };
       }
-    });
+    }).init().vertx();
 
     vertx.createNetServer().connectHandler(so -> {
       fail();
@@ -77,14 +76,14 @@ public class GlobalEventExecutorNotificationTest extends AsyncTestBase {
   @Test
   public void testNetBindError() {
     RuntimeException cause = new RuntimeException();
-    vertx = VertxImpl.vertx(new VertxOptions(), new Transport() {
+    vertx = new VertxBuilder().transport(new Transport() {
       @Override
       public ChannelFactory<? extends ServerChannel> serverChannelFactory(boolean domainSocket) {
         return (ChannelFactory<ServerChannel>) () -> {
           throw cause;
         };
       }
-    });
+    }).init().vertx();
 
     vertx.createNetServer()
       .connectHandler(so -> fail())
@@ -97,14 +96,14 @@ public class GlobalEventExecutorNotificationTest extends AsyncTestBase {
   @Test
   public void testHttpBindError() {
     RuntimeException cause = new RuntimeException();
-    vertx = VertxImpl.vertx(new VertxOptions(), new Transport() {
+    vertx = new VertxBuilder().transport(new Transport() {
       @Override
       public ChannelFactory<? extends ServerChannel> serverChannelFactory(boolean domainSocket) {
         return (ChannelFactory<ServerChannel>) () -> {
           throw cause;
         };
       }
-    });
+    }).init().vertx();
 
     vertx.createHttpServer()
       .requestHandler(req -> fail())

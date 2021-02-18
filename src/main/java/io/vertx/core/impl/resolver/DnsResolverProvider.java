@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -212,7 +212,7 @@ public class DnsResolverProvider implements ResolverProvider {
   @Override
   public void close(Handler<Void> doneHandler) {
     Context context = vertx.getOrCreateContext();
-    ResolverRegistration[] registrations = this.resolvers.toArray(new ResolverRegistration[this.resolvers.size()]);
+    ResolverRegistration[] registrations = this.resolvers.toArray(new ResolverRegistration[0]);
     if (registrations.length == 0) {
       context.runOnContext(doneHandler);
       return;

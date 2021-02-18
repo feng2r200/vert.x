@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -10,6 +10,8 @@
  */
 
 package io.vertx.core.impl;
+
+import io.vertx.core.spi.VertxThreadFactory;
 
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -22,8 +24,8 @@ public class VertxExecutorService extends ThreadPoolExecutor {
 
   public VertxExecutorService(int maxThreads, String prefix) {
     super(maxThreads, maxThreads,
-        0L, TimeUnit.MILLISECONDS,
-        new LinkedBlockingQueue<>(),
-        new VertxThreadFactory(prefix, new BlockedThreadChecker(10000, TimeUnit.MILLISECONDS, 10000, TimeUnit.MILLISECONDS), false, 10000, TimeUnit.NANOSECONDS));
+      0L, TimeUnit.MILLISECONDS,
+      new LinkedBlockingQueue<>(),
+      r -> VertxThreadFactory.INSTANCE.newVertxThread(r, prefix, false, 10000, TimeUnit.NANOSECONDS));
   }
 }

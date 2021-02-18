@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -11,7 +11,6 @@
 
 package io.vertx.it;
 
-import io.vertx.core.logging.Log4j2LogDelegateFactory;
 import io.vertx.core.logging.Logger;
 import io.vertx.core.logging.LoggerFactory;
 import io.vertx.core.spi.logging.LogDelegate;
@@ -28,21 +27,18 @@ import static org.junit.Assert.*;
  *
  * @author <a href="http://escoffier.me">Clement Escoffier</a>
  */
+@SuppressWarnings("deprecation")
 public class Log4J2LogDelegateTest {
 
   private static StreamRecording recording;
 
   @BeforeClass
   public static void initialize() throws IOException {
-    // Clear value.
-    System.setProperty("vertx.logger-delegate-factory-class-name", Log4j2LogDelegateFactory.class.getName());
-    LoggerFactory.initialise();
     recording = new StreamRecording();
   }
 
   @AfterClass
   public static void terminate() {
-    System.clearProperty("vertx.logger-delegate-factory-class-name");
     recording.terminate();
   }
 

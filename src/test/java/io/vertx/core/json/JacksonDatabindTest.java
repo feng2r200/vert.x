@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 Red Hat, Inc. and others
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -24,6 +24,7 @@ import org.junit.Test;
 import java.time.Instant;
 import java.util.*;
 
+import static io.vertx.core.json.impl.JsonUtil.BASE64_ENCODER;
 import static java.time.format.DateTimeFormatter.ISO_INSTANT;
 
 /**
@@ -85,7 +86,7 @@ public class JacksonDatabindTest extends VertxTestBase {
   public void testBytesDecoding() {
     Pojo original = new Pojo();
     original.bytes = TestUtils.randomByteArray(12);
-    Pojo decoded = Json.decodeValue("{\"bytes\":\"" + Base64.getEncoder().encodeToString(original.bytes) + "\"}", Pojo.class);
+    Pojo decoded = Json.decodeValue("{\"bytes\":\"" + BASE64_ENCODER.encodeToString(original.bytes) + "\"}", Pojo.class);
     assertArrayEquals(original.bytes, decoded.bytes);
   }
 

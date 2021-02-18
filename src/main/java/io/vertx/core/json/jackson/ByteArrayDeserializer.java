@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -18,7 +18,8 @@ import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 
 import java.io.IOException;
 import java.time.Instant;
-import java.util.Base64;
+
+import static io.vertx.core.json.impl.JsonUtil.BASE64_DECODER;
 
 class ByteArrayDeserializer extends JsonDeserializer<byte[]> {
 
@@ -26,7 +27,7 @@ class ByteArrayDeserializer extends JsonDeserializer<byte[]> {
   public byte[] deserialize(JsonParser p, DeserializationContext ctxt) throws IOException, JsonProcessingException {
     String text = p.getText();
     try {
-      return Base64.getDecoder().decode(text);
+      return BASE64_DECODER.decode(text);
     } catch (IllegalArgumentException e) {
       throw new InvalidFormatException(p, "Expected a base64 encoded byte array", text, Instant.class);
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 Red Hat, Inc. and others
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -22,8 +22,13 @@ public class ClasspathVerticleFactoryTest extends VertxTestBase {
 
   @Test
   public void testLoadedFromClasspath() {
-    assertEquals(1, vertx.verticleFactories().size());
-    VerticleFactory fact = vertx.verticleFactories().iterator().next();
-    assertTrue(fact instanceof ClasspathVerticleFactory);
+    assertEquals(2, vertx.verticleFactories().size());
+    boolean found = false;
+    for (VerticleFactory fact : vertx.verticleFactories()) {
+      if (fact instanceof ClasspathVerticleFactory) {
+        found = true;
+      }
+    }
+    assertTrue(found);
   }
 }

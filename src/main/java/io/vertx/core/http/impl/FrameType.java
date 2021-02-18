@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 Red Hat, Inc. and others
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -11,10 +11,9 @@
 package io.vertx.core.http.impl;
 
 /**
- * @author <a href="http://tfox.org">Tim Fox</a>
- */
-/**
  * List of all frame types.
+ *
+ * @author <a href="http://tfox.org">Tim Fox</a>
  */
 public enum FrameType {
   CONTINUATION,

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -15,7 +15,6 @@ import io.vertx.codegen.annotations.*;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
-import io.vertx.core.Promise;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.streams.ReadStream;
 import io.vertx.core.streams.WriteStream;
@@ -33,7 +32,7 @@ import javax.security.cert.X509Certificate;
  * when a server accepts a connection.
  * <p>
  * It implements both {@link ReadStream} and {@link WriteStream} so it can be used with
- * {@link io.vertx.core.streams.Pump} to pump data with flow control.
+ * {@link io.vertx.core.streams.Pipe} to pipe data with flow control.
  *
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
@@ -147,11 +146,7 @@ public interface NetSocket extends ReadStream<Buffer>, WriteStream<Buffer> {
    * @param length length
    * @return a future result of the send operation
    */
-  default Future<Void> sendFile(String filename, long offset, long length) {
-    Promise<Void> promise = Promise.promise();
-    sendFile(filename, offset, length, promise);
-    return promise.future();
-  }
+  Future<Void> sendFile(String filename, long offset, long length);
 
   /**
    * Same as {@link #sendFile(String)} but also takes a handler that will be called when the send has completed or
@@ -194,13 +189,15 @@ public interface NetSocket extends ReadStream<Buffer>, WriteStream<Buffer> {
   NetSocket sendFile(String filename, long offset, long length, Handler<AsyncResult<Void>> resultHandler);
 
   /**
-   * @return the remote address for this socket
+   * @return the remote address for this connection, possibly {@code null} (e.g a server bound on a domain socket).
+   * If {@code useProxyProtocol} is set to {@code true}, the address returned will be of the actual connecting client.
    */
   @CacheReturn
   SocketAddress remoteAddress();
 
   /**
-   * @return the local address for this socket
+   * @return the local address for this connection, possibly {@code null} (e.g a server bound on a domain socket)
+   * If {@code useProxyProtocol} is set to {@code true}, the address returned will be of the proxy.
    */
   @CacheReturn
   SocketAddress localAddress();
@@ -252,11 +249,7 @@ public interface NetSocket extends ReadStream<Buffer>, WriteStream<Buffer> {
   /**
    * Like {@link #upgradeToSsl(Handler)} but returns a {@code Future} of the asynchronous result
    */
-  default Future<Void> upgradeToSsl() {
-    Promise<Void> promise = Promise.promise();
-    upgradeToSsl(promise);
-    return promise.future();
-  }
+  Future<Void> upgradeToSsl();
 
   /**
    * Upgrade channel to use SSL/TLS. Be aware that for this to work SSL must be configured.
@@ -271,11 +264,7 @@ public interface NetSocket extends ReadStream<Buffer>, WriteStream<Buffer> {
   /**
    * Like {@link #upgradeToSsl(String, Handler)} but returns a {@code Future} of the asynchronous result
    */
-  default Future<Void> upgradeToSsl(String serverName) {
-    Promise<Void> promise = Promise.promise();
-    upgradeToSsl(serverName, promise);
-    return promise.future();
-  }
+  Future<Void> upgradeToSsl(String serverName);
 
   /**
    * @return true if this {@link io.vertx.core.net.NetSocket} is encrypted via SSL/TLS.

@@ -13,8 +13,8 @@ package io.vertx.core;
 import io.vertx.codegen.annotations.CacheReturn;
 import io.vertx.codegen.annotations.GenIgnore;
 import io.vertx.codegen.annotations.VertxGen;
-
-import static io.vertx.core.Future.factory;
+import io.vertx.core.impl.NoStackTraceThrowable;
+import io.vertx.core.impl.future.PromiseImpl;
 
 /**
  * Represents the writable side of an action that may, or may not, have occurred yet.
@@ -30,56 +30,13 @@ import static io.vertx.core.Future.factory;
 public interface Promise<T> extends Handler<AsyncResult<T>> {
 
   /**
-   * Create a succeeded promise with a {@code null} result
-   *
-   * @param <T>  the result type
-   * @return  the promise
-   */
-  static <T> Promise<T> succeededPromise() {
-    return factory.succeededPromise();
-  }
-
-  /**
-   * Created a succeeded promise with the specified {@code result}.
-   *
-   * @param result  the result
-   * @param <T>  the result type
-   * @return  the promise
-   */
-  static <T> Promise<T> succeededPromise(T result) {
-    return factory.succeededPromise(result);
-  }
-
-  /**
-   * Create a failed promise with the specified failure {@code cause}.
-   *
-   * @param cause  the failure cause as a Throwable
-   * @param <T>  the result type
-   * @return  the promise
-   */
-  static <T> Promise<T> failedPromise(Throwable cause) {
-    return factory.failedPromise(cause);
-  }
-
-  /**
-   * Create a failed promise with the specified {@code failureMessage}.
-   *
-   * @param failureMessage  the failure message
-   * @param <T>  the result type
-   * @return  the promise
-   */
-  static <T> Promise<T> failedPromise(String failureMessage) {
-    return factory.failurePromise(failureMessage);
-  }
-
-  /**
    * Create a promise that hasn't completed yet
    *
    * @param <T>  the result type
    * @return  the promise
    */
   static <T> Promise<T> promise() {
-    return factory.promise();
+    return new PromiseImpl<>();
   }
 
   /**
@@ -89,7 +46,13 @@ public interface Promise<T> extends Handler<AsyncResult<T>> {
    */
   @GenIgnore
   @Override
-  void handle(AsyncResult<T> asyncResult);
+  default void handle(AsyncResult<T> asyncResult) {
+    if (asyncResult.succeeded()) {
+      complete(asyncResult.result());
+    } else {
+      fail(asyncResult.cause());
+    }
+  }
 
   /**
    * Set the result. Any handler will be called, if there is one, and the promise will be marked as completed.
@@ -99,14 +62,22 @@ public interface Promise<T> extends Handler<AsyncResult<T>> {
    * @param result  the result
    * @throws IllegalStateException when the promise is already completed
    */
-  void complete(T result);
+  default void complete(T result) {
+    if (!tryComplete(result)) {
+      throw new IllegalStateException("Result is already complete");
+    }
+  }
 
   /**
    * Calls {@code complete(null)}
    *
    * @throws IllegalStateException when the promise is already completed
    */
-  void complete();
+  default void complete() {
+    if (!tryComplete()) {
+      throw new IllegalStateException("Result is already complete");
+    }
+  }
 
   /**
    * Set the failure. Any handler will be called, if there is one, and the future will be marked as completed.
@@ -114,7 +85,11 @@ public interface Promise<T> extends Handler<AsyncResult<T>> {
    * @param cause  the failure cause
    * @throws IllegalStateException when the promise is already completed
    */
-  void fail(Throwable cause);
+  default void fail(Throwable cause) {
+    if (!tryFail(cause)) {
+      throw new IllegalStateException("Result is already complete");
+    }
+  }
 
   /**
    * Calls {@link #fail(Throwable)} with the {@code message}.
@@ -122,7 +97,11 @@ public interface Promise<T> extends Handler<AsyncResult<T>> {
    * @param message  the failure message
    * @throws IllegalStateException when the promise is already completed
    */
-  void fail(String message);
+  default void fail(String message) {
+    if (!tryFail(message)) {
+      throw new IllegalStateException("Result is already complete");
+    }
+  }
 
   /**
    * Like {@link #complete(Object)} but returns {@code false} when the promise is already completed instead of throwing
@@ -138,7 +117,9 @@ public interface Promise<T> extends Handler<AsyncResult<T>> {
    *
    * @return {@code false} when the future is already completed
    */
-  boolean tryComplete();
+  default boolean tryComplete() {
+    return tryComplete(null);
+  }
 
   /**
    * Like {@link #fail(Throwable)} but returns {@code false} when the promise is already completed instead of throwing
@@ -155,7 +136,9 @@ public interface Promise<T> extends Handler<AsyncResult<T>> {
    * @param message  the failure message
    * @return false when the future is already completed
    */
-  boolean tryFail(String message);
+  default boolean tryFail(String message) {
+    return tryFail(new NoStackTraceThrowable(message));
+  }
 
   /**
    * @return the {@link Future} associated with this promise, it can be used to be aware of the promise completion

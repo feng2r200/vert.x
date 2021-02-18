@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2018 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -196,4 +196,23 @@ public class HttpUtilsTest {
     URI resolved = HttpUtils.resolveURIReference(base, rel);
     assertEquals(URI.create(expected), resolved);
   }
+
+  @Test
+  public void testResolveURIEncode() throws Exception {
+    check("https://foo.com", "/%7E", "/%7E");
+    check("https://foo.com", "/%7E/", "/%7E/");
+    check("https://foo.com", "%7E/", "/%7E/");
+    check("https://foo.com/A", "%7E/", "/%7E/");
+    check("https://foo.com/%6E/", "%7E/", "/%6E/%7E/");
+    check("https://foo.com", "https://bar.com/%7E", "/%7E");
+    check("https://foo.com", "https://bar.com/%7E/", "/%7E/");
+    check("https://foo.com/%6E", "", "/%6E");
+    check("https://foo.com/%6E/", "", "/%6E/");
+  }
+
+  private void check(String base, String ref, String expected) throws Exception {
+    URI uri = HttpUtils.resolveURIReference(base, ref);
+    assertEquals(expected, uri.getPath());
+  }
+
 }

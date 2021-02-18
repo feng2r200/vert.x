@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -26,12 +26,10 @@ public class IsolatingClassLoader extends URLClassLoader {
 
   private volatile boolean closed;
   private List<String> isolatedClasses;
-  int refCount;
 
   public IsolatingClassLoader(URL[] urls, ClassLoader parent, List<String> isolatedClasses) {
     super(urls, parent);
     this.isolatedClasses = isolatedClasses;
-    this.refCount = 0;
   }
 
   @Override

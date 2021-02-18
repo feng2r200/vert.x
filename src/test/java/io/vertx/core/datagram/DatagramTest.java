@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 Red Hat, Inc. and others
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -11,9 +11,11 @@
 package io.vertx.core.datagram;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.UnpooledHeapByteBuf;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Context;
 import io.vertx.core.DeploymentOptions;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.datagram.DatagramSocket;
@@ -111,7 +113,8 @@ public class DatagramTest extends VertxTestBase {
         while (buff != buff.unwrap() && buff.unwrap() != null) {
           buff = buff.unwrap();
         }
-        assertTrue("Was expecting an unpooled buffer instead of " + buff.getClass().getSimpleName(), buff.getClass().getSimpleName().contains("Unpooled"));
+
+        assertTrue("Was expecting an unpooled buffer instead of " + buff.getClass().getSimpleName(), buff instanceof UnpooledHeapByteBuf);
         assertEquals(expected, data);
         complete();
       });
@@ -572,4 +575,30 @@ public class DatagramTest extends VertxTestBase {
       await();
     });
   }
-}
+
+  @Test
+  public void testWorker() {
+    waitFor(2);
+    Buffer expected = TestUtils.randomBuffer(128);
+    vertx.deployVerticle(new AbstractVerticle() {
+      @Override
+      public void start(Promise<Void> startPromise) {
+        peer2 = vertx.createDatagramSocket(new DatagramSocketOptions());
+        peer2.exceptionHandler(t -> fail(t.getMessage()));
+        peer2.handler(packet -> {
+          assertTrue(Context.isOnWorkerThread());
+          assertSame(context, Vertx.currentContext());
+          complete();
+        });
+        peer2.listen(1234, "127.0.0.1")
+          .<Void>mapEmpty()
+          .onComplete(startPromise);
+      }
+    }, new DeploymentOptions().setWorker(true), onSuccess(id -> {
+      peer1 = vertx.createDatagramSocket(new DatagramSocketOptions());
+      peer1.send(expected, 1234, "127.0.0.1", onSuccess(s -> {
+        complete();
+      }));
+    }));
+    await();
+  }}

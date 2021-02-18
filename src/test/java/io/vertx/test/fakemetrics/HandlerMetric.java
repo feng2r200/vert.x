@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -22,10 +22,9 @@ public class HandlerMetric {
   public final String repliedAddress;
   public final AtomicInteger scheduleCount = new AtomicInteger();
   public final AtomicInteger localScheduleCount = new AtomicInteger();
-  public final AtomicInteger beginCount = new AtomicInteger();
-  public final AtomicInteger endCount = new AtomicInteger();
-  public final AtomicInteger failureCount = new AtomicInteger();
-  public final AtomicInteger localBeginCount = new AtomicInteger();
+  public final AtomicInteger discardCount = new AtomicInteger();
+  public final AtomicInteger deliveredCount = new AtomicInteger();
+  public final AtomicInteger localDeliveredCount = new AtomicInteger();
 
   public HandlerMetric(String address, String repliedAddress) {
     this.address = address;
@@ -34,7 +33,7 @@ public class HandlerMetric {
 
   @Override
   public String toString() {
-    return "HandlerRegistration[address=" + address + ",repliedAddress=" + repliedAddress + ",beginCount=" + beginCount.get() +
-        ",endCount=" + endCount.get() + ",failureCount=" + failureCount + ",localCount=" + localBeginCount.get() + "]";
+    return "HandlerRegistration[address=" + address + ",repliedAddress=" + repliedAddress +
+        ",deliveredCount=" + deliveredCount.get() + ",discardCount="  + discardCount + ",localCount=" + localDeliveredCount.get() + "]";
   }
 }

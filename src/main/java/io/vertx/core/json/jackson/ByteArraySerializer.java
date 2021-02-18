@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -15,12 +15,13 @@ import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.SerializerProvider;
 
 import java.io.IOException;
-import java.util.Base64;
+
+import static io.vertx.core.json.impl.JsonUtil.BASE64_ENCODER;
 
 class ByteArraySerializer extends JsonSerializer<byte[]> {
 
   @Override
   public void serialize(byte[] value, JsonGenerator jgen, SerializerProvider provider) throws IOException {
-    jgen.writeString(Base64.getEncoder().encodeToString(value));
+    jgen.writeString(BASE64_ENCODER.encodeToString(value));
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -11,14 +11,12 @@
 
 package io.vertx.core.http;
 
-import io.vertx.codegen.annotations.CacheReturn;
 import io.vertx.codegen.annotations.GenIgnore;
 import io.vertx.codegen.annotations.Nullable;
 import io.vertx.codegen.annotations.VertxGen;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
-import io.vertx.core.MultiMap;
 import io.vertx.core.Promise;
 import io.vertx.core.buffer.Buffer;
 
@@ -29,8 +27,8 @@ import javax.security.cert.X509Certificate;
 /**
  * Represents a server side WebSocket.
  * <p>
- * Instances of this class are passed into a {@link io.vertx.core.http.HttpServer#websocketHandler} or provided
- * when a WebSocket handshake is manually {@link HttpServerRequest#upgrade}ed.
+ * Instances of this class are passed into a {@link io.vertx.core.http.HttpServer#webSocketHandler} or provided
+ * when a WebSocket handshake is manually {@link HttpServerRequest#toWebSocket}ed.
  *
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
@@ -81,6 +79,18 @@ public interface ServerWebSocket extends WebSocketBase {
 
   @Override
   ServerWebSocket frameHandler(Handler<WebSocketFrame> handler);
+
+  /**
+   * @return the WebSocket handshake scheme
+   */
+  @Nullable
+  String scheme();
+
+  /**
+   * @return the WebSocket handshake host
+   */
+  @Nullable
+  String host();
 
   /*
    * @return the WebSocket handshake URI. This is a relative URI.
@@ -145,16 +155,15 @@ public interface ServerWebSocket extends WebSocketBase {
    * Calling this method will override the {@code future} completion handler.
    *
    * @param future the future to complete with
+   * @param handler the completion handler
    * @throws IllegalStateException when the WebSocket has already an asynchronous result
    */
-  void setHandshake(Promise<Integer> future);
+  void setHandshake(Future<Integer> future, Handler<AsyncResult<Integer>> handler);
 
   /**
-   * @deprecated instead use {@link #setHandshake(Promise)}
+   * Like {@link #setHandshake(Future, Handler)} but returns a {@code Future} of the asynchronous result
    */
-  @GenIgnore
-  @Deprecated
-  void setHandshake(Future<Integer> future);
+  Future<Integer> setHandshake(Future<Integer> future);
 
   /**
    * {@inheritDoc}

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -66,15 +66,11 @@ class EpollTransport extends Transport {
   }
 
   @Override
-  public SocketAddress convert(io.vertx.core.net.SocketAddress address, boolean resolved) {
-    if (address.path() != null) {
+  public SocketAddress convert(io.vertx.core.net.SocketAddress address) {
+    if (address.isDomainSocket()) {
       return new DomainSocketAddress(address.path());
     } else {
-      if (resolved) {
-        return new InetSocketAddress(address.host(), address.port());
-      } else {
-        return InetSocketAddress.createUnresolved(address.host(), address.port());
-      }
+      return super.convert(address);
     }
   }
 
@@ -139,22 +135,24 @@ class EpollTransport extends Transport {
   public void configure(NetServerOptions options, boolean domainSocket, ServerBootstrap bootstrap) {
     if (!domainSocket) {
       bootstrap.option(EpollChannelOption.SO_REUSEPORT, options.isReusePort());
+      if (options.isTcpFastOpen()) {
+        bootstrap.option(EpollChannelOption.TCP_FASTOPEN, options.isTcpFastOpen() ? pendingFastOpenRequestsThreshold : 0);
+      }
+      bootstrap.childOption(EpollChannelOption.TCP_QUICKACK, options.isTcpQuickAck());
+      bootstrap.childOption(EpollChannelOption.TCP_CORK, options.isTcpCork());
     }
-    if (options.isTcpFastOpen()) {
-      bootstrap.option(EpollChannelOption.TCP_FASTOPEN, options.isTcpFastOpen() ? pendingFastOpenRequestsThreshold : 0);
-    }
-    bootstrap.childOption(EpollChannelOption.TCP_QUICKACK, options.isTcpQuickAck());
-    bootstrap.childOption(EpollChannelOption.TCP_CORK, options.isTcpCork());
     super.configure(options, domainSocket, bootstrap);
   }
 
   @Override
   public void configure(ClientOptionsBase options, boolean domainSocket, Bootstrap bootstrap) {
-    if (options.isTcpFastOpen()) {
-      bootstrap.option(EpollChannelOption.TCP_FASTOPEN_CONNECT, options.isTcpFastOpen());
+    if (!domainSocket) {
+      if (options.isTcpFastOpen()) {
+        bootstrap.option(EpollChannelOption.TCP_FASTOPEN_CONNECT, options.isTcpFastOpen());
+      }
+      bootstrap.option(EpollChannelOption.TCP_QUICKACK, options.isTcpQuickAck());
+      bootstrap.option(EpollChannelOption.TCP_CORK, options.isTcpCork());
     }
-    bootstrap.option(EpollChannelOption.TCP_QUICKACK, options.isTcpQuickAck());
-    bootstrap.option(EpollChannelOption.TCP_CORK, options.isTcpCork());
     super.configure(options, domainSocket, bootstrap);
   }
 }

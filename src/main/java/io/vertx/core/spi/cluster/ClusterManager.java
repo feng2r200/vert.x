@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -12,12 +12,13 @@
 package io.vertx.core.spi.cluster;
 
 
-import io.vertx.core.AsyncResult;
-import io.vertx.core.Handler;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
+import io.vertx.core.impl.VertxBuilder;
 import io.vertx.core.shareddata.AsyncMap;
 import io.vertx.core.shareddata.Counter;
 import io.vertx.core.shareddata.Lock;
+import io.vertx.core.spi.VertxServiceProvider;
 
 import java.util.List;
 import java.util.Map;
@@ -40,61 +41,127 @@ import java.util.Map;
  *
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
-public interface ClusterManager {
+public interface ClusterManager extends VertxServiceProvider {
 
-  void setVertx(Vertx vertx);
+  @Override
+  default void init(VertxBuilder builder) {
+    if (builder.clusterManager() == null) {
+      builder.clusterManager(this);
+    }
+  }
 
   /**
-   * Return an async multi-map for the given name
+   * Invoked before this cluster node tries to join the cluster.
+   * <p>
+   * Implementations must signal the provided {@code nodeSelector} when messaging handler registrations are added or removed
+   * by sending a {@link RegistrationUpdateEvent} with {@link NodeSelector#registrationsUpdated(RegistrationUpdateEvent)}.
+   *
+   * @param vertx        the Vert.x instance
+   * @param nodeSelector the {@link NodeSelector} that must receive {@link RegistrationUpdateEvent}.
    */
-  <K, V> void getAsyncMultiMap(String name, Handler<AsyncResult<AsyncMultiMap<K, V>>> resultHandler);
+  void init(Vertx vertx, NodeSelector nodeSelector);
 
   /**
-   * Return an async map for the given name
+   * Return an {@link AsyncMap} for the given {@code name}.
    */
-  <K, V> void getAsyncMap(String name, Handler<AsyncResult<AsyncMap<K, V>>> resultHandler);
+  <K, V> void getAsyncMap(String name, Promise<AsyncMap<K, V>> promise);
 
   /**
-   * Return a synchronous map for the given name
+   * Return a synchronous map for the given {@code name}.
    */
   <K, V> Map<K, V> getSyncMap(String name);
 
-  void getLockWithTimeout(String name, long timeout, Handler<AsyncResult<Lock>> resultHandler);
-
-  void getCounter(String name, Handler<AsyncResult<Counter>> resultHandler);
-
   /**
-   * Return the unique node ID for this node
+   * Attempts to acquire a {@link Lock} for the given {@code name} within {@code timeout} milliseconds.
    */
-  String getNodeID();
+  void getLockWithTimeout(String name, long timeout, Promise<Lock> promise);
 
   /**
-   * Return a list of node IDs corresponding to the nodes in the cluster
-   *
+   * Return a {@link Counter} for the given {@code name}.
+   */
+  void getCounter(String name, Promise<Counter> promise);
+
+  /**
+   * Return the unique node identifier for this node.
+   */
+  String getNodeId();
+
+  /**
+   * Return a list of node identifiers corresponding to the nodes in the cluster.
    */
   List<String> getNodes();
 
   /**
    * Set a listener that will be called when a node joins or leaves the cluster.
-   *
-   * @param listener
    */
   void nodeListener(NodeListener listener);
 
   /**
-   * Join the cluster
+   * Store the details about this clustered node.
    */
-  void join(Handler<AsyncResult<Void>> resultHandler);
+  void setNodeInfo(NodeInfo nodeInfo, Promise<Void> promise);
 
   /**
-   * Leave the cluster
+   * Get details about this clustered node.
    */
-  void leave(Handler<AsyncResult<Void>> resultHandler);
+  NodeInfo getNodeInfo();
+
+  /**
+   * Get details about a specific node in the cluster.
+   *
+   * @param nodeId the clustered node id
+   */
+  void getNodeInfo(String nodeId, Promise<NodeInfo> promise);
+
+  /**
+   * Join the cluster.
+   */
+  void join(Promise<Void> promise);
+
+  /**
+   * Leave the cluster.
+   */
+  void leave(Promise<Void> promise);
 
   /**
    * Is the cluster manager active?
    *
-   * @return  true if active, false otherwise
+   * @return true if active, false otherwise
    */
   boolean isActive();
+
+  /**
+   * Share a new messaging handler registration with other nodes in the cluster.
+   */
+  void addRegistration(String address, RegistrationInfo registrationInfo, Promise<Void> promise);
+
+  /**
+   * Signal removal of a messaging handler registration to other nodes in the cluster.
+   */
+  void removeRegistration(String address, RegistrationInfo registrationInfo, Promise<Void> promise);
+
+  /**
+   * Get the messaging handler currently registered in the cluster.
+   */
+  void getRegistrations(String address, Promise<List<RegistrationInfo>> promise);
+
+  /**
+   * If the cluster manager has its own server for data/membership, this returns the host it is listening to.
+   * When users don't configure the eventbus cluster host, the value will serve as a default.
+   *
+   * @return null if the cluster manager does not start a server or the host couldn't be determined
+   */
+  default String clusterHost() {
+    return null;
+  }
+
+  /**
+   * If the cluster manager has its own server for data/membership, this returns the host it advertises to other nodes.
+   * When users don't configure the eventbus cluster public host, the value will serve as a default.
+   *
+   * @return null if the cluster manager does not advertise a host that is different from the cluster host or the public host couldn't be determined
+   */
+  default String clusterPublicHost() {
+    return null;
+  }
 }

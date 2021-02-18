@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2018 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -13,7 +13,9 @@ package io.vertx.core.impl.launcher.commands;
 
 import io.vertx.core.*;
 import io.vertx.core.cli.annotations.*;
+import io.vertx.core.eventbus.AddressHelper;
 import io.vertx.core.eventbus.EventBusOptions;
+import io.vertx.core.impl.VertxBuilder;
 import io.vertx.core.impl.launcher.VertxLifecycleHooks;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.json.DecodeException;
@@ -25,10 +27,6 @@ import io.vertx.core.spi.launcher.ExecutionContext;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.lang.reflect.Method;
-import java.net.Inet6Address;
-import java.net.InetAddress;
-import java.net.NetworkInterface;
-import java.net.SocketException;
 import java.util.Enumeration;
 import java.util.Objects;
 import java.util.Properties;
@@ -49,6 +47,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class BareCommand extends ClasspathHandler {
 
   public static final String VERTX_OPTIONS_PROP_PREFIX = "vertx.options.";
+  public static final String VERTX_EVENTBUS_PROP_PREFIX = "vertx.eventBus.options.";
   public static final String DEPLOYMENT_OPTIONS_PROP_PREFIX = "vertx.deployment.options.";
   public static final String METRICS_OPTIONS_PROP_PREFIX = "vertx.metrics.options.";
 
@@ -200,20 +199,35 @@ public class BareCommand extends ClasspathHandler {
   @SuppressWarnings("ThrowableResultOfMethodCallIgnored")
   protected Vertx startVertx() {
     JsonObject optionsJson = getJsonFromFileOrString(vertxOptions, "options");
+
+    EventBusOptions eventBusOptions;
+    VertxBuilder builder;
     if (optionsJson == null) {
-      MetricsOptions metricsOptions = getMetricsOptions();
-      options = new VertxOptions().setMetricsOptions(metricsOptions);
+      eventBusOptions = getEventBusOptions();
+      builder = new VertxBuilder();
     } else {
-      MetricsOptions metricsOptions = getMetricsOptions(optionsJson.getJsonObject("metricsOptions"));
-      options = new VertxOptions(optionsJson).setMetricsOptions(metricsOptions);
+      eventBusOptions = getEventBusOptions(optionsJson.getJsonObject("eventBusOptions"));
+      builder = new VertxBuilder(optionsJson);
+    }
+    options = builder.options();
+    options.setEventBusOptions(eventBusOptions);
+
+    configureFromSystemProperties.set(log);
+    try {
+      configureFromSystemProperties(options, VERTX_OPTIONS_PROP_PREFIX);
+      if (options.getMetricsOptions() != null) {
+        configureFromSystemProperties(options.getMetricsOptions(), METRICS_OPTIONS_PROP_PREFIX);
+      }
+      builder.init();
+    } finally {
+      configureFromSystemProperties.set(null);
     }
 
-    configureFromSystemProperties(options, VERTX_OPTIONS_PROP_PREFIX);
     beforeStartingVertx(options);
     Vertx instance;
     if (isClustered()) {
       log.info("Starting clustering...");
-      EventBusOptions eventBusOptions = options.getEventBusOptions();
+      eventBusOptions = options.getEventBusOptions();
       if (!Objects.equals(eventBusOptions.getHost(), EventBusOptions.DEFAULT_CLUSTER_HOST)) {
         clusterHost = eventBusOptions.getHost();
       }
@@ -226,20 +240,9 @@ public class BareCommand extends ClasspathHandler {
       if (eventBusOptions.getClusterPublicPort() != EventBusOptions.DEFAULT_CLUSTER_PUBLIC_PORT) {
         clusterPublicPort = eventBusOptions.getClusterPublicPort();
       }
-      if (clusterHost == null) {
-        clusterHost = getDefaultAddress();
-        if (clusterHost == null) {
-          log.error("Unable to find a default network interface for clustering. Please specify one using -cluster-host");
-          return null;
-        } else {
-          log.info("No cluster-host specified so using address " + clusterHost);
-        }
-      }
-      CountDownLatch latch = new CountDownLatch(1);
-      AtomicReference<AsyncResult<Vertx>> result = new AtomicReference<>();
 
-      eventBusOptions.setClustered(true)
-        .setHost(clusterHost).setPort(clusterPort)
+      eventBusOptions.setHost(clusterHost)
+        .setPort(clusterPort)
         .setClusterPublicHost(clusterPublicHost);
       if (clusterPublicPort != -1) {
         eventBusOptions.setClusterPublicPort(clusterPublicPort);
@@ -254,7 +257,9 @@ public class BareCommand extends ClasspathHandler {
         }
       }
 
-      create(options, ar -> {
+      CountDownLatch latch = new CountDownLatch(1);
+      AtomicReference<AsyncResult<Vertx>> result = new AtomicReference<>();
+      create(builder, ar -> {
         result.set(ar);
         latch.countDown();
       });
@@ -274,7 +279,7 @@ public class BareCommand extends ClasspathHandler {
       }
       instance = result.get().result();
     } else {
-      instance = create(options);
+      instance = create(builder);
     }
     addShutdownHook(instance, log, finalAction);
     afterStartingVertx(instance);
@@ -332,30 +337,39 @@ public class BareCommand extends ClasspathHandler {
   }
 
   /**
-   * @return the metric options.
+   * @return the event bus options.
    */
-  protected MetricsOptions getMetricsOptions() {
-    return getMetricsOptions(null);
+  protected EventBusOptions getEventBusOptions() {
+    return getEventBusOptions(null);
   }
 
   /**
-   * @return the metric options.
+   * @return the event bus options.
    */
-  protected MetricsOptions getMetricsOptions(JsonObject jsonObject) {
-    MetricsOptions metricsOptions;
-    VertxMetricsFactory factory = ServiceHelper.loadFactoryOrNull(VertxMetricsFactory.class);
-    if (factory != null) {
-      metricsOptions = jsonObject == null ? factory.newOptions() : factory.newOptions(jsonObject);
-    } else {
-      metricsOptions = jsonObject == null ? new MetricsOptions() : new MetricsOptions(jsonObject);
+  protected EventBusOptions getEventBusOptions(JsonObject jsonObject) {
+    EventBusOptions eventBusOptions = jsonObject == null ? new EventBusOptions() : new EventBusOptions(jsonObject);
+    configureFromSystemProperties.set(log);
+    try {
+      configureFromSystemProperties(eventBusOptions, VERTX_EVENTBUS_PROP_PREFIX);
+    } finally {
+      configureFromSystemProperties.set(null);
     }
-    configureFromSystemProperties(metricsOptions, METRICS_OPTIONS_PROP_PREFIX);
-    return metricsOptions;
+    return eventBusOptions;
   }
 
-  protected void configureFromSystemProperties(Object options, String prefix) {
+  private static final ThreadLocal<Logger> configureFromSystemProperties = new ThreadLocal<>();
+
+  /**
+   * This is used as workaround to retain the existing behavior of the Vert.x CLI and won't be executed
+   * in other situation.
+   */
+  public static void configureFromSystemProperties(Object options, String prefix) {
+    Logger log = configureFromSystemProperties.get();
+    if (log == null) {
+      return;
+    }
     Properties props = System.getProperties();
-    Enumeration e = props.propertyNames();
+    Enumeration<?> e = props.propertyNames();
     // Uhh, properties suck
     while (e.hasMoreElements()) {
       String propName = (String) e.nextElement();
@@ -397,10 +411,10 @@ public class BareCommand extends ClasspathHandler {
     }
   }
 
-  private Method getSetter(String fieldName, Class<?> clazz) {
+  private static Method getSetter(String fieldName, Class<?> clazz) {
     Method[] meths = clazz.getDeclaredMethods();
     for (Method meth : meths) {
-      if (("set" + fieldName).toLowerCase().equals(meth.getName().toLowerCase())) {
+      if (("set" + fieldName).equalsIgnoreCase(meth.getName())) {
         return meth;
       }
     }
@@ -408,7 +422,7 @@ public class BareCommand extends ClasspathHandler {
     // This set contains the overridden methods
     meths = clazz.getMethods();
     for (Method meth : meths) {
-      if (("set" + fieldName).toLowerCase().equals(meth.getName().toLowerCase())) {
+      if (("set" + fieldName).equalsIgnoreCase(meth.getName())) {
         return meth;
       }
     }
@@ -461,29 +475,11 @@ public class BareCommand extends ClasspathHandler {
 
   /**
    * @return Get default interface to use since the user hasn't specified one.
+   * @deprecated as of 4.0, this method is no longer used.
    */
+  @Deprecated
   protected String getDefaultAddress() {
-    Enumeration<NetworkInterface> nets;
-    try {
-      nets = NetworkInterface.getNetworkInterfaces();
-    } catch (SocketException e) {
-      return null;
-    }
-    NetworkInterface netinf;
-    while (nets.hasMoreElements()) {
-      netinf = nets.nextElement();
-
-      Enumeration<InetAddress> addresses = netinf.getInetAddresses();
-
-      while (addresses.hasMoreElements()) {
-        InetAddress address = addresses.nextElement();
-        if (!address.isAnyLocalAddress() && !address.isMulticastAddress()
-          && !(address instanceof Inet6Address)) {
-          return address.getHostAddress();
-        }
-      }
-    }
-    return null;
+    return AddressHelper.defaultAddress();
   }
 
 

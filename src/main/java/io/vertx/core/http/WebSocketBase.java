@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -85,18 +85,18 @@ public interface WebSocketBase extends ReadStream<Buffer>, WriteStream<Buffer> {
   /**
    * Returns the WebSocket sub protocol selected by the WebSocket handshake.
    * <p/>
-   * On the server, the value will be {@code null} when the handler receives the websocket callback as the
+   * On the server, the value will be {@code null} when the handler receives the WebSocket callback as the
    * handshake will not be completed yet.
    */
   String subProtocol();
 
   /**
-   * Returns the status code received when the WebSocket was closed by the other side, otherwise {@code null}.
+   * Returns the close status code received from the remote endpoint or {@code null} when not yet received.
    */
   Short closeStatusCode();
 
   /**
-   * Returns the reason message received when the WebSocket was closed by the other side, otherwise {@code null}.
+   * Returns the close reason message from the remote endpoint or {@code null} when not yet received.
    */
   String closeReason();
 
@@ -191,10 +191,17 @@ public interface WebSocketBase extends ReadStream<Buffer>, WriteStream<Buffer> {
    * states that the only response to a ping frame is a pong frame with identical contents.
    *
    * @param data the data to write, may be at most 125 bytes
-   * @return a future completed with the result
+   * @param handler called when the ping frame has been successfully written
+   * @return a reference to this, so the API can be used fluently
    */
   @Fluent
-  WebSocketBase writePing(Buffer data);
+  WebSocketBase writePing(Buffer data, Handler<AsyncResult<Void>> handler);
+
+  /**
+   * Like {@link #writePing(Buffer, Handler)} but with an {@code handler} called when the message has been written
+   * or failed to be written.
+   */
+  Future<Void> writePing(Buffer data);
 
   /**
    * Writes a pong frame to the connection. This will be written in a single frame. Pong frames may be at most 125 bytes (octets).
@@ -207,10 +214,17 @@ public interface WebSocketBase extends ReadStream<Buffer>, WriteStream<Buffer> {
    * to implement a one way heartbeat.
    *
    * @param data the data to write, may be at most 125 bytes
+   * @param handler called when the pong frame has been successfully written
    * @return a reference to this, so the API can be used fluently
    */
   @Fluent
-  WebSocketBase writePong(Buffer data);
+  WebSocketBase writePong(Buffer data, Handler<AsyncResult<Void>> handler);
+
+  /**
+   * Like {@link #writePong(Buffer, Handler)} but with an {@code handler} called when the message has been written
+   * or failed to be written.
+   */
+  Future<Void> writePong(Buffer data);
 
   /**
    * Set a close handler. This will be called when the WebSocket is closed.
@@ -335,13 +349,15 @@ public interface WebSocketBase extends ReadStream<Buffer>, WriteStream<Buffer> {
   void close(short statusCode, @Nullable String reason, Handler<AsyncResult<Void>> handler);
 
   /**
-   * @return the remote address for this socket
+   * @return the remote address for this connection, possibly {@code null} (e.g a server bound on a domain socket).
+   * If {@code useProxyProtocol} is set to {@code true}, the address returned will be of the actual connecting client.
    */
   @CacheReturn
   SocketAddress remoteAddress();
 
   /**
-   * @return the local address for this socket
+   * @return the local address for this connection, possibly {@code null} (e.g a server bound on a domain socket)
+   * If {@code useProxyProtocol} is set to {@code true}, the address returned will be of the proxy.
    */
   @CacheReturn
   SocketAddress localAddress();

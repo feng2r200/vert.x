@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -21,8 +21,8 @@ import io.vertx.core.parsetools.JsonEvent;
 import io.vertx.core.parsetools.JsonEventType;
 
 import java.time.Instant;
-import java.util.Base64;
 
+import static io.vertx.core.json.impl.JsonUtil.BASE64_DECODER;
 import static java.time.format.DateTimeFormatter.ISO_INSTANT;
 
 /**
@@ -167,7 +167,7 @@ public class JsonEventImpl implements JsonEvent {
 
   @Override
   public Buffer binaryValue() {
-    return value != null ? Buffer.buffer(Base64.getDecoder().decode((String) value)) : null;
+    return value != null ? Buffer.buffer(BASE64_DECODER.decode((String) value)) : null;
   }
 
   @Override

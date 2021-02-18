@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2018 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2021 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -16,6 +16,7 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.resolver.AddressResolverGroup;
 import io.netty.util.ResourceLeakDetector;
 import io.netty.util.concurrent.GenericFutureListener;
+import io.vertx.codegen.annotations.Nullable;
 import io.vertx.core.Future;
 import io.vertx.core.*;
 import io.vertx.core.datagram.DatagramSocket;
@@ -27,6 +28,7 @@ import io.vertx.core.dns.DnsClientOptions;
 import io.vertx.core.dns.impl.DnsClientImpl;
 import io.vertx.core.eventbus.EventBus;
 import io.vertx.core.eventbus.impl.EventBusImpl;
+import io.vertx.core.eventbus.impl.EventBusInternal;
 import io.vertx.core.eventbus.impl.clustered.ClusteredEventBus;
 import io.vertx.core.file.FileSystem;
 import io.vertx.core.file.impl.FileResolver;
@@ -38,6 +40,7 @@ import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.http.impl.HttpClientImpl;
 import io.vertx.core.http.impl.HttpServerImpl;
+import io.vertx.core.impl.future.PromiseInternal;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.core.impl.resolver.DnsResolverProvider;
@@ -48,13 +51,15 @@ import io.vertx.core.net.NetServerOptions;
 import io.vertx.core.net.impl.NetClientImpl;
 import io.vertx.core.net.impl.NetServerImpl;
 import io.vertx.core.net.impl.ServerID;
+import io.vertx.core.net.impl.TCPServerBase;
 import io.vertx.core.net.impl.transport.Transport;
 import io.vertx.core.shareddata.SharedData;
 import io.vertx.core.shareddata.impl.SharedDataImpl;
+import io.vertx.core.spi.ExecutorServiceFactory;
 import io.vertx.core.spi.VerticleFactory;
-import io.vertx.core.spi.VertxMetricsFactory;
-import io.vertx.core.spi.VertxTracerFactory;
+import io.vertx.core.spi.VertxThreadFactory;
 import io.vertx.core.spi.cluster.ClusterManager;
+import io.vertx.core.spi.cluster.NodeSelector;
 import io.vertx.core.spi.metrics.Metrics;
 import io.vertx.core.spi.metrics.MetricsProvider;
 import io.vertx.core.spi.metrics.PoolMetrics;
@@ -63,6 +68,7 @@ import io.vertx.core.spi.tracing.VertxTracer;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.ref.WeakReference;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.*;
@@ -83,21 +89,15 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
   private static final int NETTY_IO_RATIO = Integer.getInteger(NETTY_IO_RATIO_PROPERTY_NAME, 50);
 
   static {
-    // Netty resource leak detection has a performance overhead and we do not need it in Vert.x
-    ResourceLeakDetector.setLevel(ResourceLeakDetector.Level.DISABLED);
+    // Disable Netty's resource leak detection to reduce the performance overhead if not set by user
+    // Supports both the default netty leak detection system property and the deprecated one
+    if (System.getProperty("io.netty.leakDetection.level") == null &&
+        System.getProperty("io.netty.leakDetectionLevel") == null) {
+      ResourceLeakDetector.setLevel(ResourceLeakDetector.Level.DISABLED);
+    }
+
     // Use the JDK deflater/inflater by default
     System.setProperty("io.netty.noJdkZlibDecoder", "false");
-  }
-
-  static VertxImpl vertx(VertxOptions options, Transport transport) {
-    VertxImpl vertx = new VertxImpl(options, transport);
-    vertx.init();
-    return vertx;
-  }
-
-  static void clusteredVertx(VertxOptions options, Transport transport, Handler<AsyncResult<Vertx>> resultHandler) {
-    VertxImpl vertx = new VertxImpl(options, transport);
-    vertx.joinCluster(options, resultHandler);
   }
 
   private final FileSystem fileSystem = getFileSystem();
@@ -106,19 +106,23 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
   private final ConcurrentMap<Long, InternalTimerHandler> timeouts = new ConcurrentHashMap<>();
   private final AtomicLong timeoutCounter = new AtomicLong(0);
   private final ClusterManager clusterManager;
+  private final NodeSelector nodeSelector;
   private final DeploymentManager deploymentManager;
+  private final VerticleManager verticleManager;
   private final FileResolver fileResolver;
   private final Map<ServerID, HttpServerImpl> sharedHttpServers = new HashMap<>();
   private final Map<ServerID, NetServerImpl> sharedNetServers = new HashMap<>();
   final WorkerPool workerPool;
-  final WorkerPool internalBlockingPool;
+  final WorkerPool internalWorkerPool;
+  private final VertxThreadFactory threadFactory;
+  private final ExecutorServiceFactory executorServiceFactory;
   private final ThreadFactory eventLoopThreadFactory;
   private final EventLoopGroup eventLoopGroup;
   private final EventLoopGroup acceptorEventLoopGroup;
   private final BlockedThreadChecker checker;
   private final AddressResolver addressResolver;
   private final AddressResolverOptions addressResolverOptions;
-  private final EventBus eventBus;
+  private final EventBusInternal eventBus;
   private volatile HAManager haManager;
   private boolean closed;
   private volatile Handler<Throwable> exceptionHandler;
@@ -130,9 +134,12 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
   private final TimeUnit maxEventLoopExecTimeUnit;
   private final CloseHooks closeHooks;
   private final Transport transport;
-  final VertxTracer tracer;
+  private final VertxTracer tracer;
+  private final ThreadLocal<WeakReference<AbstractContext>> stickyContext = new ThreadLocal<>();
 
-  private VertxImpl(VertxOptions options, Transport transport) {
+  VertxImpl(VertxOptions options, ClusterManager clusterManager, NodeSelector nodeSelector, VertxMetrics metrics,
+            VertxTracer<?, ?> tracer, Transport transport, FileResolver fileResolver, VertxThreadFactory threadFactory,
+            ExecutorServiceFactory executorServiceFactory) {
     // Sanity check
     if (Vertx.currentContext() != null) {
       log.warn("You're already on a Vert.x context, are you sure you want to create a new Vertx instance?");
@@ -141,107 +148,111 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
     maxEventLoopExecTime = options.getMaxEventLoopExecuteTime();
     maxEventLoopExecTimeUnit = options.getMaxEventLoopExecuteTimeUnit();
     checker = new BlockedThreadChecker(options.getBlockedThreadCheckInterval(), options.getBlockedThreadCheckIntervalUnit(), options.getWarningExceptionTime(), options.getWarningExceptionTimeUnit());
-    eventLoopThreadFactory = new VertxThreadFactory("vert.x-eventloop-thread-", checker, false, maxEventLoopExecTime, maxEventLoopExecTimeUnit);
+    eventLoopThreadFactory = createThreadFactory(maxEventLoopExecTime, maxEventLoopExecTimeUnit, "vert.x-eventloop-thread-", false);
     eventLoopGroup = transport.eventLoopGroup(Transport.IO_EVENT_LOOP_GROUP, options.getEventLoopPoolSize(), eventLoopThreadFactory, NETTY_IO_RATIO);
-    ThreadFactory acceptorEventLoopThreadFactory = new VertxThreadFactory("vert.x-acceptor-thread-", checker, false, options.getMaxEventLoopExecuteTime(), options.getMaxEventLoopExecuteTimeUnit());
+    ThreadFactory acceptorEventLoopThreadFactory = createThreadFactory(options.getMaxEventLoopExecuteTime(), options.getMaxEventLoopExecuteTimeUnit(), "vert.x-acceptor-thread-", false);
     // The acceptor event loop thread needs to be from a different pool otherwise can get lags in accepted connections
     // under a lot of load
     acceptorEventLoopGroup = transport.eventLoopGroup(Transport.ACCEPTOR_EVENT_LOOP_GROUP, 1, acceptorEventLoopThreadFactory, 100);
 
-    metrics = initialiseMetrics(options);
-
-    ExecutorService workerExec = Executors.newFixedThreadPool(options.getWorkerPoolSize(),
-        new VertxThreadFactory("vert.x-worker-thread-", checker, true, options.getMaxWorkerExecuteTime(), options.getMaxWorkerExecuteTimeUnit()));
+    int workerPoolSize = options.getWorkerPoolSize();
+    ThreadFactory workerThreadFactory = createThreadFactory(options.getMaxWorkerExecuteTime(), options.getMaxWorkerExecuteTimeUnit(), "vert.x-worker-thread-", true);
+    ExecutorService workerExec = executorServiceFactory.createExecutor(workerThreadFactory, workerPoolSize, workerPoolSize);
     PoolMetrics workerPoolMetrics = metrics != null ? metrics.createPoolMetrics("worker", "vert.x-worker-thread", options.getWorkerPoolSize()) : null;
-    ExecutorService internalBlockingExec = Executors.newFixedThreadPool(options.getInternalBlockingPoolSize(),
-        new VertxThreadFactory("vert.x-internal-blocking-", checker, true, options.getMaxWorkerExecuteTime(), options.getMaxWorkerExecuteTimeUnit()));
+    ThreadFactory internalWorkerThreadFactory = createThreadFactory(options.getMaxWorkerExecuteTime(), options.getMaxWorkerExecuteTimeUnit(), "vert.x-internal-blocking-", true);
+    ExecutorService internalWorkerExec = executorServiceFactory.createExecutor(internalWorkerThreadFactory, options.getInternalBlockingPoolSize(), options.getInternalBlockingPoolSize());
     PoolMetrics internalBlockingPoolMetrics = metrics != null ? metrics.createPoolMetrics("worker", "vert.x-internal-blocking", options.getInternalBlockingPoolSize()) : null;
-    internalBlockingPool = new WorkerPool(internalBlockingExec, internalBlockingPoolMetrics);
+    internalWorkerPool = new WorkerPool(internalWorkerExec, internalBlockingPoolMetrics);
     namedWorkerPools = new HashMap<>();
     workerPool = new WorkerPool(workerExec, workerPoolMetrics);
     defaultWorkerPoolSize = options.getWorkerPoolSize();
     maxWorkerExecTime = options.getMaxWorkerExecuteTime();
     maxWorkerExecTimeUnit = options.getMaxWorkerExecuteTimeUnit();
 
+    this.executorServiceFactory = executorServiceFactory;
+    this.threadFactory = threadFactory;
+    this.metrics = metrics;
     this.transport = transport;
-    this.fileResolver = new FileResolver(options.getFileSystemOptions());
+    this.fileResolver = fileResolver;
     this.addressResolverOptions = options.getAddressResolverOptions();
     this.addressResolver = new AddressResolver(this, options.getAddressResolverOptions());
-    this.deploymentManager = new DeploymentManager(this);
-    this.tracer = initializeTracer(options);
-    if (options.getEventBusOptions().isClustered()) {
-      this.clusterManager = getClusterManager(options);
-      this.eventBus = new ClusteredEventBus(this, options, clusterManager);
-    } else {
-      this.clusterManager = null;
-      this.eventBus = new EventBusImpl(this);
-    }
+    this.tracer = tracer == VertxTracer.NOOP ? null : tracer;
+    this.clusterManager = clusterManager;
+    this.nodeSelector = nodeSelector;
+    this.eventBus = clusterManager != null ? new ClusteredEventBus(this, options, clusterManager, nodeSelector) : new EventBusImpl(this);
     this.sharedData = new SharedDataImpl(this, clusterManager);
+    this.deploymentManager = new DeploymentManager(this);
+    this.verticleManager = new VerticleManager(this, deploymentManager);
   }
 
-  private void init() {
-    eventBus.start(ar -> {});
+  void init() {
+    eventBus.start(Promise.promise());
     if (metrics != null) {
       metrics.vertxCreated(this);
     }
   }
 
-  private void joinCluster(VertxOptions options, Handler<AsyncResult<Vertx>> resultHandler) {
-    clusterManager.setVertx(this);
-    clusterManager.join(ar -> {
-      if (ar.succeeded()) {
-        createHaManager(options, resultHandler);
-      } else {
-        log.error("Failed to join cluster", ar.cause());
-        resultHandler.handle(Future.failedFuture(ar.cause()));
-      }
-    });
-  }
-
-  private void createHaManager(VertxOptions options, Handler<AsyncResult<Vertx>> resultHandler) {
-    this.<Map<String, String>>executeBlocking(fut -> {
-      fut.complete(clusterManager.getSyncMap(CLUSTER_MAP_NAME));
-    }, false, ar -> {
-      if (ar.succeeded()) {
-        Map<String, String> clusterMap = ar.result();
-        haManager = new HAManager(this, deploymentManager, clusterManager, clusterMap, options.getQuorumSize(), options.getHAGroup(), options.isHAEnabled());
-        startEventBus(resultHandler);
-      } else {
-        log.error("Failed to start HAManager", ar.cause());
-        resultHandler.handle(Future.failedFuture(ar.cause()));
-      }
-    });
-  }
-
-  private void startEventBus(Handler<AsyncResult<Vertx>> resultHandler) {
-    eventBus.start(ar -> {
-      if (ar.succeeded()) {
-        initializeHaManager(resultHandler);
-      } else {
-        log.error("Failed to start event bus", ar.cause());
-        resultHandler.handle(Future.failedFuture(ar.cause()));
-      }
-    });
-  }
-
-  private void initializeHaManager(Handler<AsyncResult<Vertx>> resultHandler) {
-    this.executeBlocking(fut -> {
-      // Init the manager (i.e register listener and check the quorum)
-      // after the event bus has been fully started and updated its state
-      // it will have also set the clustered changed view handler on the ha manager
-      haManager.init();
-      fut.complete();
-    }, false, ar -> {
+  void initClustered(VertxOptions options, Handler<AsyncResult<Vertx>> resultHandler) {
+    nodeSelector.init(this, clusterManager);
+    clusterManager.init(this, nodeSelector);
+    Promise<Void> initPromise = getOrCreateContext().promise();
+    initPromise.future().onComplete(ar -> {
       if (ar.succeeded()) {
         if (metrics != null) {
           metrics.vertxCreated(this);
         }
         resultHandler.handle(Future.succeededFuture(this));
       } else {
-        log.error("Failed to initialize HAManager", ar.cause());
-        resultHandler.handle(Future.failedFuture(ar.cause()));
+        log.error("Failed to initialize clustered Vert.x", ar.cause());
+        close().onComplete(ignore -> resultHandler.handle(Future.failedFuture(ar.cause())));
       }
     });
+    Promise<Void> joinPromise = Promise.promise();
+    joinPromise.future().onComplete(ar -> {
+      if (ar.succeeded()) {
+        createHaManager(options, initPromise);
+      } else {
+        initPromise.fail(ar.cause());
+      }
+    });
+    clusterManager.join(joinPromise);
+  }
+
+  private void createHaManager(VertxOptions options, Promise<Void> initPromise) {
+    this.<HAManager>executeBlocking(fut -> {
+      Map<String, String> syncMap = clusterManager.getSyncMap(CLUSTER_MAP_NAME);
+      HAManager haManager = new HAManager(this, deploymentManager, verticleManager, clusterManager, syncMap, options.getQuorumSize(), options.getHAGroup(), options.isHAEnabled());
+      fut.complete(haManager);
+    }, false, ar -> {
+      if (ar.succeeded()) {
+        haManager = ar.result();
+        startEventBus(initPromise);
+      } else {
+        initPromise.fail(ar.cause());
+      }
+    });
+  }
+
+  private void startEventBus(Promise<Void> initPromise) {
+    Promise<Void> promise = Promise.promise();
+    eventBus.start(promise);
+    promise.future().onComplete(ar -> {
+      if (ar.succeeded()) {
+        initializeHaManager(initPromise);
+      } else {
+        initPromise.fail(ar.cause());
+      }
+    });
+  }
+
+  private void initializeHaManager(Promise<Void> initPromise) {
+    this.executeBlocking(fut -> {
+      // Init the manager (i.e register listener and check the quorum)
+      // after the event bus has been fully started and updated its state
+      // it will have also set the clustered changed view handler on the ha manager
+      haManager.init();
+      fut.complete();
+    }, false, initPromise);
   }
 
   /**
@@ -280,8 +291,19 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
     return createNetServer(new NetServerOptions());
   }
 
+  @Override
+  public NetClient createNetClient(NetClientOptions options, CloseFuture closeFuture) {
+    NetClientImpl client = new NetClientImpl(this, options, closeFuture);
+    closeFuture.init(client);
+    return client;
+  }
+
   public NetClient createNetClient(NetClientOptions options) {
-    return new NetClientImpl(this, options);
+    CloseFuture closeFuture = new CloseFuture();
+    NetClient client = createNetClient(options, closeFuture);
+    CloseHooks hooks = resolveHooks();
+    hooks.add(closeFuture);
+    return client;
   }
 
   @Override
@@ -316,8 +338,19 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
     return createHttpServer(new HttpServerOptions());
   }
 
+  @Override
+  public HttpClient createHttpClient(HttpClientOptions options, CloseFuture closeFuture) {
+    HttpClientImpl client = new HttpClientImpl(this, options, closeFuture);
+    closeFuture.init(client);
+    return client;
+  }
+
   public HttpClient createHttpClient(HttpClientOptions options) {
-    return new HttpClientImpl(this, options);
+    CloseFuture closeFuture = new CloseFuture();
+    HttpClient client = createHttpClient(options, closeFuture);
+    CloseHooks hooks = resolveHooks();
+    hooks.add(closeFuture);
+    return client;
   }
 
   @Override
@@ -347,6 +380,23 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
     return new TimeoutStreamImpl(delay, false);
   }
 
+  @Override
+  public <T> PromiseInternal<T> promise() {
+    ContextInternal context = getOrCreateContext();
+    return context.promise();
+  }
+
+  @Override
+  public <T> PromiseInternal<T> promise(Handler<AsyncResult<T>> handler) {
+    if (handler instanceof PromiseInternal) {
+      return (PromiseInternal<T>) handler;
+    } else {
+      PromiseInternal<T> promise = promise();
+      promise.future().onComplete(handler);
+      return promise;
+    }
+  }
+
   public void runOnContext(Handler<Void> task) {
     ContextInternal context = getOrCreateContext();
     context.runOnContext(task);
@@ -366,10 +416,11 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
   }
 
   public ContextInternal getOrCreateContext() {
-    ContextInternal ctx = getContext();
+    AbstractContext ctx = getContext();
     if (ctx == null) {
       // We are running embedded - Create a context
-      ctx = createEventLoopContext((Deployment) null, null, Thread.currentThread().getContextClassLoader());
+      ctx = createEventLoopContext();
+      stickyContext.set(new WeakReference<>(ctx));
     }
     return ctx;
   }
@@ -380,6 +431,17 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
 
   public Map<ServerID, NetServerImpl> sharedNetServers() {
     return sharedNetServers;
+  }
+
+  @Override
+  public <S extends TCPServerBase> Map<ServerID, S> sharedTCPServers(Class<S> type) {
+    if (type == NetServerImpl.class) {
+      return (Map<ServerID, S>) sharedNetServers;
+    } else if (type == HttpServerImpl.class) {
+      return (Map<ServerID, S>) sharedHttpServers;
+    } else {
+      throw new IllegalStateException();
+    }
   }
 
   @Override
@@ -403,21 +465,28 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
   }
 
   @Override
-  public EventLoopContext createEventLoopContext(Deployment deployment, WorkerPool workerPool, ClassLoader tccl) {
-    return new EventLoopContext(this, tracer, internalBlockingPool, workerPool != null ? workerPool : this.workerPool, deployment, tccl);
+  public EventLoopContext createEventLoopContext(Deployment deployment, CloseHooks closeHooks, WorkerPool workerPool, ClassLoader tccl) {
+    return new EventLoopContext(this, tracer, eventLoopGroup.next(), internalWorkerPool, workerPool != null ? workerPool : this.workerPool, deployment, closeHooks, tccl);
   }
 
   @Override
   public EventLoopContext createEventLoopContext(EventLoop eventLoop, WorkerPool workerPool, ClassLoader tccl) {
-    return new EventLoopContext(this, tracer, eventLoop, internalBlockingPool, workerPool != null ? workerPool : this.workerPool, null, tccl);
+    return new EventLoopContext(this, tracer, eventLoop, internalWorkerPool, workerPool != null ? workerPool : this.workerPool, null, null, tccl);
   }
 
   @Override
-  public ContextInternal createWorkerContext(Deployment deployment, WorkerPool workerPool, ClassLoader tccl) {
-    if (workerPool == null) {
-      workerPool = this.workerPool;
-    }
-    return new WorkerContext(this, tracer, internalBlockingPool, workerPool, deployment, tccl);
+  public EventLoopContext createEventLoopContext() {
+    return createEventLoopContext(null, null, null, Thread.currentThread().getContextClassLoader());
+  }
+
+  @Override
+  public WorkerContext createWorkerContext(Deployment deployment, CloseHooks closeHooks, WorkerPool workerPool, ClassLoader tccl) {
+    return new WorkerContext(this, tracer, internalWorkerPool, workerPool != null ? workerPool : this.workerPool, deployment, closeHooks, tccl);
+  }
+
+  @Override
+  public WorkerContext createWorkerContext() {
+    return createWorkerContext(null, null, null, null);
   }
 
   @Override
@@ -445,81 +514,27 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
     return new DnsClientImpl(this, options);
   }
 
-  private VertxMetrics initialiseMetrics(VertxOptions options) {
-    if (options.getMetricsOptions() != null && options.getMetricsOptions().isEnabled()) {
-      VertxMetricsFactory factory = options.getMetricsOptions().getFactory();
-      if (factory == null) {
-        factory = ServiceHelper.loadFactoryOrNull(VertxMetricsFactory.class);
-        if (factory == null) {
-          log.warn("Metrics has been set to enabled but no VertxMetricsFactory found on classpath");
-        }
-      }
-      if (factory != null) {
-        VertxMetrics metrics = factory.metrics(options);
-        Objects.requireNonNull(metrics, "The metric instance created from " + factory + " cannot be null");
-        return metrics;
-      }
-    }
-    return null;
-  }
-
-  private VertxTracer initializeTracer(VertxOptions options) {
-    if (options.getTracingOptions() != null && options.getTracingOptions().isEnabled()) {
-      VertxTracerFactory factory = options.getTracingOptions().getFactory();
-      if (factory == null) {
-        factory = ServiceHelper.loadFactoryOrNull(VertxTracerFactory.class);
-        if (factory == null) {
-          log.warn("Metrics has been set to enabled but no TracerFactory found on classpath");
-        }
-      }
-      if (factory != null) {
-        VertxTracer tracer = factory.tracer(options.getTracingOptions());
-        Objects.requireNonNull(tracer, "The tracer instance created from " + factory + " cannot be null");
-        return tracer;
-      }
-    }
-    return null;
-  }
-
-  private ClusterManager getClusterManager(VertxOptions options) {
-    ClusterManager mgr = options.getClusterManager();
-    if (mgr == null) {
-      String clusterManagerClassName = System.getProperty("vertx.cluster.managerClass");
-      if (clusterManagerClassName != null) {
-        // We allow specify a sys prop for the cluster manager factory which overrides ServiceLoader
-        try {
-          Class<?> clazz = Class.forName(clusterManagerClassName);
-          mgr = (ClusterManager) clazz.newInstance();
-        } catch (Exception e) {
-          throw new IllegalStateException("Failed to instantiate " + clusterManagerClassName, e);
-        }
-      } else {
-        mgr = ServiceHelper.loadFactoryOrNull(ClusterManager.class);
-        if (mgr == null) {
-          throw new IllegalStateException("No ClusterManagerFactory instances found on classpath");
-        }
-      }
-    }
-    return mgr;
-  }
-
-  private long scheduleTimeout(ContextInternal context, Handler<Long> handler, long delay, boolean periodic) {
+  public long scheduleTimeout(ContextInternal context, Handler<Long> handler, long delay, boolean periodic) {
     if (delay < 1) {
       throw new IllegalArgumentException("Cannot schedule a timer with delay < 1 ms");
     }
     long timerId = timeoutCounter.getAndIncrement();
     InternalTimerHandler task = new InternalTimerHandler(timerId, handler, periodic, delay, context);
     timeouts.put(timerId, task);
-    context.addCloseHook(task);
+    if (context.isDeployment()) {
+      context.addCloseHook(task);
+    }
     return timerId;
   }
 
-  public ContextInternal getContext() {
-    ContextInternal context = (ContextInternal) AbstractContext.context();
+  public AbstractContext getContext() {
+    AbstractContext context = (AbstractContext) ContextInternal.current();
     if (context != null && context.owner() == this) {
       return context;
+    } else {
+      WeakReference<AbstractContext> ref = stickyContext.get();
+      return ref != null ? ref.get() : null;
     }
-    return null;
   }
 
   public ClusterManager getClusterManager() {
@@ -528,24 +543,27 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
 
   @Override
   public Future<Void> close() {
+    // Create this promise purposely without a context because the close operation will close thread pools
     Promise<Void> promise = Promise.promise();
     close(promise);
     return promise.future();
   }
 
   private void closeClusterManager(Handler<AsyncResult<Void>> completionHandler) {
+    Promise<Void> leavePromise = getOrCreateContext().promise();
     if (clusterManager != null) {
-      clusterManager.leave(ar -> {
-        if (ar.failed()) {
-          log.error("Failed to leave cluster", ar.cause());
-        }
-        if (completionHandler != null) {
-          runOnContext(v -> completionHandler.handle(Future.succeededFuture()));
-        }
-      });
-    } else if (completionHandler != null) {
-      runOnContext(v -> completionHandler.handle(Future.succeededFuture()));
+      clusterManager.leave(leavePromise);
+    } else {
+      leavePromise.complete();
     }
+    leavePromise.future().onComplete(ar -> {
+      if (ar.failed()) {
+        log.error("Failed to leave cluster", ar.cause());
+      }
+      if (completionHandler != null) {
+        completionHandler.handle(Future.succeededFuture());
+      }
+    });
   }
 
   @Override
@@ -558,9 +576,8 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
       return;
     }
     closed = true;
-
     closeHooks.run(ar -> {
-      deploymentManager.undeployAll(ar1 -> {
+      deploymentManager.undeployAll().onComplete(ar1 -> {
         HAManager haManager = haManager();
         Promise<Void> haPromise = Promise.promise();
         if (haManager != null) {
@@ -571,38 +588,14 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
         } else {
           haPromise.complete();
         }
-        haPromise.future().setHandler(ar2 -> {
+        haPromise.future().onComplete(ar2 -> {
           addressResolver.close(ar3 -> {
-            eventBus.close(ar4 -> {
+            Promise<Void> ebClose = getOrCreateContext().promise();
+            eventBus.close(ebClose);
+            ebClose.future().onComplete(ar4 -> {
               closeClusterManager(ar5 -> {
                 // Copy set to prevent ConcurrentModificationException
-                Set<HttpServerImpl> httpServers = new HashSet<>(sharedHttpServers.values());
-                Set<NetServerImpl> netServers = new HashSet<>(sharedNetServers.values());
-                sharedHttpServers.clear();
-                sharedNetServers.clear();
-
-                int serverCount = httpServers.size() + netServers.size();
-
-                AtomicInteger serverCloseCount = new AtomicInteger();
-
-                Handler<AsyncResult<Void>> serverCloseHandler = res -> {
-                  if (res.failed()) {
-                    log.error("Failure in shutting down server", res.cause());
-                  }
-                  if (serverCloseCount.incrementAndGet() == serverCount) {
-                    deleteCacheDirAndShutdown(completionHandler);
-                  }
-                };
-
-                for (HttpServerImpl server : httpServers) {
-                  server.closeAll(serverCloseHandler);
-                }
-                for (NetServerImpl server : netServers) {
-                  server.closeAll(serverCloseHandler);
-                }
-                if (serverCount == 0) {
-                  deleteCacheDirAndShutdown(completionHandler);
-                }
+                deleteCacheDirAndShutdown(completionHandler);
               });
             });
           });
@@ -612,15 +605,8 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
   }
 
   @Override
-  public Future<String> deployVerticle(Verticle verticle) {
-    Promise<String> promise = Promise.promise();
-    deployVerticle(verticle, new DeploymentOptions(), promise);
-    return promise.future();
-  }
-
-  @Override
-  public void deployVerticle(Verticle verticle, Handler<AsyncResult<String>> completionHandler) {
-    deployVerticle(verticle, new DeploymentOptions(), completionHandler);
+  public Future<String> deployVerticle(String name) {
+    return deployVerticle(name, new DeploymentOptions());
   }
 
   @Override
@@ -629,118 +615,113 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
   }
 
   @Override
+  public Future<String> deployVerticle(String name, DeploymentOptions options) {
+    if (options.isHa() && haManager() != null && haManager().isEnabled()) {
+      Promise<String> promise = getOrCreateContext().promise();
+      haManager().deployVerticle(name, options, promise);
+      return promise.future();
+    } else {
+      return verticleManager.deployVerticle(name, options).map(Deployment::deploymentID);
+    }
+  }
+
+  @Override
+  public void deployVerticle(String name, DeploymentOptions options, Handler<AsyncResult<String>> completionHandler) {
+    Future<String> fut = deployVerticle(name, options);
+    if (completionHandler != null) {
+      fut.onComplete(completionHandler);
+    }
+  }
+
+  @Override
+  public Future<String> deployVerticle(Verticle verticle) {
+    return deployVerticle(verticle, new DeploymentOptions());
+  }
+
+  @Override
+  public void deployVerticle(Verticle verticle, Handler<AsyncResult<String>> completionHandler) {
+    Future<String> fut = deployVerticle(verticle);
+    if (completionHandler != null) {
+      fut.onComplete(completionHandler);
+    }
+  }
+
+  @Override
   public Future<String> deployVerticle(Verticle verticle, DeploymentOptions options) {
-    Promise<String> promise = Promise.promise();
-    deployVerticle(verticle, options, promise);
-    return promise.future();
-  }
-
-  @Override
-  public Future<String> deployVerticle(Class<? extends Verticle> verticleClass, DeploymentOptions options) {
-    Promise<String> promise = Promise.promise();
-    deployVerticle(() -> {
-      try {
-        return verticleClass.newInstance();
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      }
-    }, options, promise);
-    return promise.future();
-  }
-
-  @Override
-  public Future<String> deployVerticle(Supplier<Verticle> verticleSupplier, DeploymentOptions options) {
-    Promise<String> promise = Promise.promise();
-    deployVerticle(verticleSupplier, options, promise);
-    return promise.future();
+    if (options.getInstances() != 1) {
+      throw new IllegalArgumentException("Can't specify > 1 instances for already created verticle");
+    }
+    return deployVerticle((Callable<Verticle>) () -> verticle, options);
   }
 
   @Override
   public void deployVerticle(Verticle verticle, DeploymentOptions options, Handler<AsyncResult<String>> completionHandler) {
-    if (options.getInstances() != 1) {
-      throw new IllegalArgumentException("Can't specify > 1 instances for already created verticle");
+    Future<String> fut = deployVerticle(verticle, options);
+    if (completionHandler != null) {
+      fut.onComplete(completionHandler);
     }
-    deployVerticle(() -> verticle, options, completionHandler);
+  }
+
+  @Override
+  public Future<String> deployVerticle(Class<? extends Verticle> verticleClass, DeploymentOptions options) {
+    return deployVerticle((Callable<Verticle>) verticleClass::newInstance, options);
   }
 
   @Override
   public void deployVerticle(Class<? extends Verticle> verticleClass, DeploymentOptions options, Handler<AsyncResult<String>> completionHandler) {
-    deployVerticle(() -> {
-      try {
-        return verticleClass.newInstance();
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      }
-    }, options, completionHandler);
+    Future<String> fut = deployVerticle(verticleClass, options);
+    if (completionHandler != null) {
+      fut.onComplete(completionHandler);
+    }
+  }
+
+  @Override
+  public Future<String> deployVerticle(Supplier<Verticle> verticleSupplier, DeploymentOptions options) {
+    return deployVerticle((Callable<Verticle>) verticleSupplier::get, options);
   }
 
   @Override
   public void deployVerticle(Supplier<Verticle> verticleSupplier, DeploymentOptions options, Handler<AsyncResult<String>> completionHandler) {
+    Future<String> fut = deployVerticle(verticleSupplier, options);
+    if (completionHandler != null) {
+      fut.onComplete(completionHandler);
+    }
+  }
+
+  private Future<String> deployVerticle(Callable<Verticle> verticleSupplier, DeploymentOptions options) {
     boolean closed;
     synchronized (this) {
       closed = this.closed;
     }
     if (closed) {
-      if (completionHandler != null) {
-        completionHandler.handle(Future.failedFuture("Vert.x closed"));
-      }
+      // If we are closed use a context less future
+      return Future.failedFuture("Vert.x closed");
     } else {
-      deploymentManager.deployVerticle(verticleSupplier, options, completionHandler);
+      return deploymentManager.deployVerticle(verticleSupplier, options);
     }
-  }
-
-  @Override
-  public Future<String> deployVerticle(String name) {
-    Promise<String> promise = Promise.promise();
-    deployVerticle(name, new DeploymentOptions(), promise);
-    return promise.future();
-  }
-
-  @Override
-  public Future<String> deployVerticle(String name, DeploymentOptions options) {
-    Promise<String> promise = Promise.promise();
-    deployVerticle(name, options, promise);
-    return promise.future();
-  }
-
-  @Override
-  public void deployVerticle(String name, DeploymentOptions options, Handler<AsyncResult<String>> completionHandler) {
-    if (options.isHa() && haManager() != null && haManager().isEnabled()) {
-      haManager().deployVerticle(name, options, completionHandler);
-    } else {
-      deploymentManager.deployVerticle(name, options, completionHandler);
-    }
-  }
-
-  @Override
-  public String getNodeID() {
-    return clusterManager.getNodeID();
   }
 
   @Override
   public Future<Void> undeploy(String deploymentID) {
-    Promise<Void> promise = Promise.promise();
-    undeploy(deploymentID, promise);
-    return promise.future();
+    Future<Void> future;
+    HAManager haManager = haManager();
+    if (haManager != null && haManager.isEnabled()) {
+      future = this.executeBlocking(fut -> {
+        haManager.removeFromHA(deploymentID);
+        fut.complete();
+      }, false);
+    } else {
+      future = getOrCreateContext().succeededFuture();
+    }
+    return future.compose(v -> deploymentManager.undeployVerticle(deploymentID));
   }
 
   @Override
   public void undeploy(String deploymentID, Handler<AsyncResult<Void>> completionHandler) {
-    HAManager haManager = haManager();
-    Promise<Void> haFuture = Promise.promise();
-    if (haManager != null && haManager.isEnabled()) {
-      this.executeBlocking(fut -> {
-        haManager.removeFromHA(deploymentID);
-        fut.complete();
-      }, false, haFuture);
-    } else {
-      haFuture.complete();
+    Future<Void> fut = undeploy(deploymentID);
+    if (completionHandler != null) {
+      fut.onComplete(completionHandler);
     }
-    haFuture.future().compose(v -> {
-      Promise<Void> deploymentFuture = Promise.promise();
-      deploymentManager.undeployVerticle(deploymentID, deploymentFuture);
-      return deploymentFuture.future();
-    }).setHandler(completionHandler);
   }
 
   @Override
@@ -750,17 +731,17 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
 
   @Override
   public void registerVerticleFactory(VerticleFactory factory) {
-    deploymentManager.registerVerticleFactory(factory);
+    verticleManager.registerVerticleFactory(factory);
   }
 
   @Override
   public void unregisterVerticleFactory(VerticleFactory factory) {
-    deploymentManager.unregisterVerticleFactory(factory);
+    verticleManager.unregisterVerticleFactory(factory);
   }
 
   @Override
   public Set<VerticleFactory> verticleFactories() {
-    return deploymentManager.verticleFactories();
+    return verticleManager.verticleFactories();
   }
 
   @Override
@@ -768,6 +749,24 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
     ContextInternal context = getOrCreateContext();
 
     context.executeBlockingInternal(blockingCodeHandler, resultHandler);
+  }
+
+  @Override
+  public <T> void executeBlockingInternal(Handler<Promise<T>> blockingCodeHandler, boolean ordered, Handler<AsyncResult<T>> resultHandler) {
+    ContextInternal context = getOrCreateContext();
+
+    context.executeBlockingInternal(blockingCodeHandler, ordered, resultHandler);
+  }
+
+  @Override
+  public <T> Future<@Nullable T> executeBlocking(Handler<Promise<T>> blockingCodeHandler, boolean ordered) {
+    ContextInternal context = getOrCreateContext();
+    return context.executeBlocking(blockingCodeHandler, ordered);
+  }
+
+  @Override
+  public <T> Future<T> executeBlocking(Handler<Promise<T>> blockingCodeHandler) {
+    return executeBlocking(blockingCodeHandler, true);
   }
 
   @Override
@@ -866,7 +865,7 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
     }, ar -> {
 
       workerPool.close();
-      internalBlockingPool.close();
+      internalWorkerPool.close();
       new ArrayList<>(namedWorkerPools.values()).forEach(WorkerPool::close);
 
       acceptorEventLoopGroup.shutdownGracefully(0, 10, TimeUnit.SECONDS).addListener(new GenericFutureListener() {
@@ -939,7 +938,7 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
 
     @Override
     public void run() {
-      context.executeFromIO(this);
+      context.emit(this);
     }
 
     public void handle(Void v) {
@@ -959,15 +958,17 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
 
     private void cancel() {
       future.cancel(false);
-      context.removeCloseHook(this);
+      if (context.isDeployment()) {
+        context.removeCloseHook(this);
+      }
     }
 
     // Called via Context close hook when Verticle is undeployed
-    public void close(Handler<AsyncResult<Void>> completionHandler) {
+    public void close(Promise<Void> completion) {
       if (timeouts.remove(timerID) != null) {
         future.cancel(false);
       }
-      completionHandler.handle(Future.succeededFuture());
+      completion.complete();
     }
   }
 
@@ -1077,15 +1078,6 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
     @Override
     void close() {
       synchronized (VertxImpl.this) {
-        if (refCount > 0) {
-          refCount = 0;
-          super.close();
-        }
-      }
-    }
-
-    void release() {
-      synchronized (VertxImpl.this) {
         if (--refCount == 0) {
           namedWorkerPools.remove(name);
           super.close();
@@ -1106,11 +1098,23 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
 
   @Override
   public synchronized WorkerExecutorImpl createSharedWorkerExecutor(String name, int poolSize, long maxExecuteTime) {
-    return createSharedWorkerExecutor(name, poolSize, maxExecuteTime, TimeUnit.NANOSECONDS);
+    return createSharedWorkerExecutor(name, poolSize, maxExecuteTime, maxWorkerExecTimeUnit);
   }
 
   @Override
   public synchronized WorkerExecutorImpl createSharedWorkerExecutor(String name, int poolSize, long maxExecuteTime, TimeUnit maxExecuteTimeUnit) {
+    SharedWorkerPool sharedWorkerPool = createSharedWorkerPool(name, poolSize, maxExecuteTime, maxExecuteTimeUnit);
+    AbstractContext ctx = getContext();
+    CloseHooks hooks = ctx != null ? ctx.closeHooks() : null;
+    if (hooks == null) {
+      hooks = closeHooks;
+    }
+    WorkerExecutorImpl namedExec = new WorkerExecutorImpl(this, closeHooks, sharedWorkerPool);
+    hooks.add(namedExec);
+    return namedExec;
+  }
+
+  public synchronized SharedWorkerPool createSharedWorkerPool(String name, int poolSize, long maxExecuteTime, TimeUnit maxExecuteTimeUnit) {
     if (poolSize < 1) {
       throw new IllegalArgumentException("poolSize must be > 0");
     }
@@ -1119,16 +1123,26 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
     }
     SharedWorkerPool sharedWorkerPool = namedWorkerPools.get(name);
     if (sharedWorkerPool == null) {
-      ExecutorService workerExec = Executors.newFixedThreadPool(poolSize, new VertxThreadFactory(name + "-", checker, true, maxExecuteTime, maxExecuteTimeUnit));
+      ThreadFactory workerThreadFactory = createThreadFactory(maxExecuteTime, maxExecuteTimeUnit, name + "-", true);
+      ExecutorService workerExec = executorServiceFactory.createExecutor(workerThreadFactory, poolSize, poolSize);
       PoolMetrics workerMetrics = metrics != null ? metrics.createPoolMetrics("worker", name, poolSize) : null;
       namedWorkerPools.put(name, sharedWorkerPool = new SharedWorkerPool(name, workerExec, workerMetrics));
     } else {
       sharedWorkerPool.refCount++;
     }
-    ContextInternal context = getOrCreateContext();
-    WorkerExecutorImpl namedExec = new WorkerExecutorImpl(context, sharedWorkerPool);
-    context.addCloseHook(namedExec);
-    return namedExec;
+    return sharedWorkerPool;
+  }
+
+  private ThreadFactory createThreadFactory(long maxExecuteTime, TimeUnit maxExecuteTimeUnit, String prefix, boolean worker) {
+    AtomicInteger threadCount = new AtomicInteger(0);
+    return runnable -> {
+      VertxThread thread = threadFactory.newVertxThread(runnable, prefix + threadCount.getAndIncrement(), worker, maxExecuteTime, maxExecuteTimeUnit);
+      checker.registerThread(thread, thread);
+      // Vert.x threads are NOT daemons - we want them to prevent JVM exit so embedded user doesn't
+      // have to explicitly prevent JVM from exiting.
+      thread.setDaemon(false);
+      return thread;
+    };
   }
 
   @Override
@@ -1150,5 +1164,14 @@ public class VertxImpl implements VertxInternal, MetricsProvider {
   @Override
   public void removeCloseHook(Closeable hook) {
     closeHooks.remove(hook);
+  }
+
+  private CloseHooks resolveHooks() {
+    AbstractContext context = getContext();
+    CloseHooks hooks = context != null ? context.closeHooks() : null;
+    if (hooks == null) {
+      hooks = closeHooks;
+    }
+    return hooks;
   }
 }

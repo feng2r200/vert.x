@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -576,6 +576,7 @@ public class MimeMapping {
     m.put("zirz", "application/vnd.zul");
     m.put("zaz", "application/vnd.zzazz.deck+xml");
     m.put("vxml", "application/voicexml+xml");
+    m.put("wasm", "application/wasm");
     m.put("wgt", "application/widget");
     m.put("hlp", "application/winhlp");
     m.put("wsdl", "application/wsdl+xml");
@@ -721,6 +722,8 @@ public class MimeMapping {
     m.put("xlf", "application/x-xliff+xml");
     m.put("xpi", "application/x-xpinstall");
     m.put("xz", "application/x-xz");
+    m.put("yml", "application/x-yaml");
+    m.put("yaml", "application/x-yaml");
     m.put("z1", "application/x-zmachine");
     m.put("z2", "application/x-zmachine");
     m.put("z3", "application/x-zmachine");
@@ -990,6 +993,7 @@ public class MimeMapping {
     m.put("f4v", "video/x-f4v");
     m.put("fli", "video/x-fli");
     m.put("flv", "video/x-flv");
+    m.put("m4a", "audio/x-m4a");
     m.put("m4v", "video/x-m4v");
     m.put("mkv", "video/x-matroska");
     m.put("mk3d", "video/x-matroska");

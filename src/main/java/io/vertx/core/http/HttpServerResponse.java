@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -16,8 +16,8 @@ import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.MultiMap;
-import io.vertx.core.Promise;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.streams.ReadStream;
 import io.vertx.core.streams.WriteStream;
 
 /**
@@ -38,7 +38,7 @@ import io.vertx.core.streams.WriteStream;
  * from the file and written to the outgoing socket.
  * <p>
  * It implements {@link io.vertx.core.streams.WriteStream} so it can be used with
- * {@link io.vertx.core.streams.Pump} to pump data with flow control.
+ * {@link io.vertx.core.streams.Pipe} to pipe data with flow control.
  *
  * @author <a href="http://tfox.org">Tim Fox</a>
  */
@@ -294,6 +294,81 @@ public interface HttpServerResponse extends WriteStream<Buffer> {
   Future<Void> end();
 
   /**
+   * Send the request with an empty body.
+   *
+   * @param handler the completion handler
+   */
+  default void send(Handler<AsyncResult<Void>> handler) {
+    end(handler);
+  }
+
+  /**
+   * Like {@link #send(Handler)} but returns a {@code Future} of the asynchronous result
+   */
+  default Future<Void> send() {
+    return end();
+  }
+
+  /**
+   * Send the request with a string {@code body}.
+   *
+   * @param handler the completion handler
+   */
+  default void send(String body, Handler<AsyncResult<Void>> handler) {
+    end(body, handler);
+  }
+
+  /**
+   * Like {@link #send(String, Handler)} but returns a {@code Future} of the asynchronous result
+   */
+  default Future<Void> send(String body) {
+    return end(body);
+  }
+
+  /**
+   * Send the request with a buffer {@code body}.
+   *
+   * @param handler the completion handler
+   */
+  default void send(Buffer body, Handler<AsyncResult<Void>> handler) {
+    end(body, handler);
+  }
+
+  /**
+   * Like {@link #send(Buffer, Handler)} but returns a {@code Future} of the asynchronous result
+   */
+  default Future<Void> send(Buffer body) {
+    return end(body);
+  }
+
+  /**
+   * Send the request with a stream {@code body}.
+   *
+   * <p> If the {@link HttpHeaders#CONTENT_LENGTH} is set then the request assumes this is the
+   * length of the {stream}, otherwise the request will set a chunked {@link HttpHeaders#CONTENT_ENCODING}.
+   *
+   * @param handler the completion handler 
+   */
+  default void send(ReadStream<Buffer> body, Handler<AsyncResult<Void>> handler) {
+    MultiMap headers = headers();
+    if (headers == null || !headers.contains(HttpHeaders.CONTENT_LENGTH)) {
+      setChunked(true);
+    }
+    body.pipeTo(this, handler);
+  }
+
+  /**
+   * Like {@link #send(ReadStream, Handler)} but returns a {@code Future} of the asynchronous result
+   */
+  default Future<Void> send(ReadStream<Buffer> body) {
+    MultiMap headers = headers();
+    if (headers == null || !headers.contains(HttpHeaders.CONTENT_LENGTH)) {
+      setChunked(true);
+    }
+    return body.pipeTo(this);
+  }
+
+  /**
    * Same as {@link #sendFile(String, long)} using offset @code{0} which means starting from the beginning of the file.
    *
    * @param filename  path to the file to serve
@@ -327,11 +402,7 @@ public interface HttpServerResponse extends WriteStream<Buffer> {
    * @param length the number of bytes to send
    * @return a future completed with the body result
    */
-  default Future<Void> sendFile(String filename, long offset, long length) {
-    Promise<Void> promise = Promise.promise();
-    sendFile(filename, offset, length, promise);
-    return promise.future();
-  }
+  Future<Void> sendFile(String filename, long offset, long length);
 
   /**
    * Like {@link #sendFile(String)} but providing a handler which will be notified once the file has been completely
@@ -429,45 +500,45 @@ public interface HttpServerResponse extends WriteStream<Buffer> {
    * Like {@link #push(HttpMethod, String, String, MultiMap, Handler)} with no headers.
    */
   @Fluent
-  HttpServerResponse push(HttpMethod method, String host, String path, Handler<AsyncResult<HttpServerResponse>> handler);
+  default HttpServerResponse push(HttpMethod method, String host, String path, Handler<AsyncResult<HttpServerResponse>> handler) {
+    return push(method, host, path, null, handler);
+  }
 
   /**
    * Same as {@link #push(HttpMethod, String, String, Handler)} but with an {@code handler} called when the operation completes
    */
   default Future<HttpServerResponse> push(HttpMethod method, String host, String path) {
-    Promise<HttpServerResponse> promise = Promise.promise();
-    push(method, host, path, promise);
-    return promise.future();
+    return push(method, host, path, (MultiMap) null);
   }
 
   /**
    * Like {@link #push(HttpMethod, String, String, MultiMap, Handler)} with the host copied from the current request.
    */
   @Fluent
-  HttpServerResponse push(HttpMethod method, String path, MultiMap headers, Handler<AsyncResult<HttpServerResponse>> handler);
+  default HttpServerResponse push(HttpMethod method, String path, MultiMap headers, Handler<AsyncResult<HttpServerResponse>> handler) {
+    return push(method, null, path, headers, handler);
+  }
 
   /**
    * Same as {@link #push(HttpMethod, String, MultiMap, Handler)} but with an {@code handler} called when the operation completes
    */
   default Future<HttpServerResponse> push(HttpMethod method, String path, MultiMap headers) {
-    Promise<HttpServerResponse> promise = Promise.promise();
-    push(method, path, headers, promise);
-    return promise.future();
+    return push(method, null, path, headers);
   }
 
   /**
    * Like {@link #push(HttpMethod, String, String, MultiMap, Handler)} with the host copied from the current request.
    */
   @Fluent
-  HttpServerResponse push(HttpMethod method, String path, Handler<AsyncResult<HttpServerResponse>> handler);
+  default HttpServerResponse push(HttpMethod method, String path, Handler<AsyncResult<HttpServerResponse>> handler) {
+    return push(method, null, path, null, handler);
+  }
 
   /**
    * Same as {@link #push(HttpMethod, String, Handler)} but with an {@code handler} called when the operation completes
    */
   default Future<HttpServerResponse> push(HttpMethod method, String path) {
-    Promise<HttpServerResponse> promise = Promise.promise();
-    push(method, path, promise);
-    return promise.future();
+    return push(method, null, path);
   }
 
   /**
@@ -489,30 +560,40 @@ public interface HttpServerResponse extends WriteStream<Buffer> {
    * @return a reference to this, so the API can be used fluently
    */
   @Fluent
-  HttpServerResponse push(HttpMethod method, String host, String path, MultiMap headers, Handler<AsyncResult<HttpServerResponse>> handler);
+  default HttpServerResponse push(HttpMethod method, String host, String path, MultiMap headers, Handler<AsyncResult<HttpServerResponse>> handler) {
+    Future<HttpServerResponse> fut = push(method, host, path, headers);
+    if (handler != null) {
+      fut.onComplete(handler);
+    }
+    return this;
+  }
 
   /**
    * Same as {@link #push(HttpMethod, String, String, MultiMap, Handler)} but with an {@code handler} called when the operation completes
    */
-  default Future<HttpServerResponse> push(HttpMethod method, String host, String path, MultiMap headers) {
-    Promise<HttpServerResponse> promise = Promise.promise();
-    push(method, host, path, headers, promise);
-    return promise.future();
-  }
+  Future<HttpServerResponse> push(HttpMethod method, String host, String path, MultiMap headers);
 
   /**
    * Reset this HTTP/2 stream with the error code {@code 0}.
    */
-  default void reset() {
-    reset(0L);
+  default boolean reset() {
+    return reset(0L);
   }
 
   /**
-   * Reset this HTTP/2 stream with the error {@code code}.
+   * Reset this response:
+   * <p/>
+   * <ul>
+   *   <li>for HTTP/2, send an HTTP/2 reset frame with the specified error {@code code}</li>
+   *   <li>for HTTP/1.x, close the connection when the current response has not yet been sent</li>
+   * </ul>
+   * <p/>
+   * When the response has already been sent nothing happens and {@code false} is returned as indicator.
    *
    * @param code the error code
+   * @return {@code true} when reset has been performed
    */
-  void reset(long code);
+  boolean reset(long code);
 
   /**
    * Write an HTTP/2 frame to the response, allowing to extend the HTTP/2 protocol.<p>

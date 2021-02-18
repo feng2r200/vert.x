@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -35,9 +35,9 @@ public class AddressResolverOptions {
   public static final List<String> DEFAULT_SERVERS = null;
 
   /**
-   * The default value for {@link #setOptResourceEnabled} = true
+   * The default value for {@link #setOptResourceEnabled} = false
    */
-  public static final boolean DEFAULT_OPT_RESOURCE_ENABLED = true;
+  public static final boolean DEFAULT_OPT_RESOURCE_ENABLED = false;
 
   /**
    * The default value for the negative cache min TTL = 0

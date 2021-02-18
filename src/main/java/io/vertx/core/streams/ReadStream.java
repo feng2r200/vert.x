@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -23,7 +23,7 @@ import io.vertx.core.streams.impl.PipeImpl;
 /**
  * Represents a stream of items that can be read from.
  * <p>
- * Any class that implements this interface can be used by a {@link Pump} to pump data from it
+ * Any class that implements this interface can be used by a {@link Pipe} to pipe data from it
  * to a {@link WriteStream}.
  * <p>
  * <h3>Streaming mode</h3>

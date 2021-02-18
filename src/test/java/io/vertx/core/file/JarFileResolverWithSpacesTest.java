@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -14,29 +14,23 @@ package io.vertx.core.file;
 import java.io.File;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.file.Files;
 
 /**
  * @author Clement Escoffier
  */
 public class JarFileResolverWithSpacesTest extends FileResolverTestBase {
 
-  private ClassLoader original;
-
   @Override
-  public void setUp() throws Exception {
-    original = Thread.currentThread().getContextClassLoader();
-    URLClassLoader someClassloader = new URLClassLoader(new URL[] { new File("src/test/resources/dir with " +
-        "spaces/webroot3.jar").toURI().toURL()}, JarFileResolverWithSpacesTest.class.getClassLoader());
-    Thread.currentThread().setContextClassLoader(someClassloader);
-    super.setUp();
-    // This is inside the jar webroot2.jar
-    webRoot = "webroot3";
+  protected ClassLoader resourcesLoader(File baseDir) throws Exception {
+    File dirWithSpaces = new File("target", "dir with spaces");
+    if (!dirWithSpaces.exists()) {
+      assertTrue(dirWithSpaces.mkdirs());
+    }
+    File files = new File(dirWithSpaces, "files.jar");
+    if (!files.exists()) {
+      files = JarFileResolverTest.getFiles(dirWithSpaces);
+    }
+    return new URLClassLoader(new URL[]{files.toURI().toURL()}, Thread.currentThread().getContextClassLoader());
   }
-
-  @Override
-  public void tearDown() throws Exception {
-    super.tearDown();
-    Thread.currentThread().setContextClassLoader(original);
-  }
-
 }

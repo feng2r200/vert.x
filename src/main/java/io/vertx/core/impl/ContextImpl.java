@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -12,7 +12,6 @@
 package io.vertx.core.impl;
 
 import io.netty.channel.EventLoop;
-import io.netty.channel.EventLoopGroup;
 import io.vertx.core.*;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
@@ -40,23 +39,14 @@ abstract class ContextImpl extends AbstractContext {
     Thread currentThread = Thread.currentThread();
     if (currentThread instanceof VertxThread) {
       VertxThread vertxThread = (VertxThread) currentThread;
-      ContextInternal prev = vertxThread.beginDispatch(null);
+      ContextInternal prev = vertxThread.beginEmission(null);
       try {
         task.handle(null);
       } finally {
-        vertxThread.endDispatch(prev);
+        vertxThread.endEmission(prev);
       }
     } else {
       task.handle(null);
-    }
-  }
-
-  private static EventLoop getEventLoop(VertxInternal vertx) {
-    EventLoopGroup group = vertx.getEventLoopGroup();
-    if (group != null) {
-      return group.next();
-    } else {
-      return null;
     }
   }
 
@@ -80,13 +70,14 @@ abstract class ContextImpl extends AbstractContext {
   final WorkerPool workerPool;
   final TaskQueue orderedTasks;
 
-  protected ContextImpl(VertxInternal vertx, VertxTracer<?, ?> tracer, WorkerPool internalBlockingPool, WorkerPool workerPool, Deployment deployment,
-                        ClassLoader tccl) {
-    this(vertx, tracer, getEventLoop(vertx), internalBlockingPool, workerPool, deployment, tccl);
-  }
-
-  protected ContextImpl(VertxInternal vertx, VertxTracer<?, ?> tracer, EventLoop eventLoop, WorkerPool internalBlockingPool, WorkerPool workerPool, Deployment deployment,
-                        ClassLoader tccl) {
+  ContextImpl(VertxInternal vertx,
+              VertxTracer<?, ?> tracer,
+              EventLoop eventLoop,
+              WorkerPool internalBlockingPool,
+              WorkerPool workerPool,
+              Deployment deployment,
+              CloseHooks closeHooks,
+              ClassLoader tccl) {
     if (VertxThread.DISABLE_TCCL && tccl != ClassLoader.getSystemClassLoader()) {
       log.warn("You have disabled TCCL checks but you have a custom TCCL to set.");
     }
@@ -97,26 +88,40 @@ abstract class ContextImpl extends AbstractContext {
     this.tccl = tccl;
     this.owner = vertx;
     this.workerPool = workerPool;
+    this.closeHooks = closeHooks;
     this.internalBlockingPool = internalBlockingPool;
     this.orderedTasks = new TaskQueue();
     this.internalOrderedTasks = new TaskQueue();
-    this.closeHooks = new CloseHooks(log);
   }
 
   public Deployment getDeployment() {
     return deployment;
   }
 
+  @Override
+  public CloseHooks closeHooks() {
+    return closeHooks;
+  }
+
   public void addCloseHook(Closeable hook) {
-    closeHooks.add(hook);
+    if (closeHooks != null) {
+      closeHooks.add(hook);
+    } else {
+      owner.addCloseHook(hook);
+    }
   }
 
-  public boolean removeCloseHook(Closeable hook) {
-    return closeHooks.remove(hook);
+  @Override
+  public boolean isDeployment() {
+    return deployment != null;
   }
 
-  public void runCloseHooks(Handler<AsyncResult<Void>> completionHandler) {
-    closeHooks.run(completionHandler);
+  public void removeCloseHook(Closeable hook) {
+    if (deployment != null) {
+      closeHooks.remove(hook);
+    } else {
+      owner.removeCloseHook(hook);
+    }
   }
 
   @Override
@@ -138,50 +143,47 @@ abstract class ContextImpl extends AbstractContext {
   }
 
   @Override
-  public <T> void executeBlockingInternal(Handler<Promise<T>> action, Handler<AsyncResult<T>> resultHandler) {
-    executeBlocking(this, action, resultHandler, internalBlockingPool, internalOrderedTasks);
+  public <T> Future<T> executeBlockingInternal(Handler<Promise<T>> action) {
+    return executeBlocking(this, action, internalBlockingPool, internalOrderedTasks);
   }
 
   @Override
-  public <T> void executeBlocking(Handler<Promise<T>> blockingCodeHandler, boolean ordered, Handler<AsyncResult<T>> resultHandler) {
-    executeBlocking(this, blockingCodeHandler, resultHandler, workerPool, ordered ? orderedTasks : null);
+  public <T> Future<T> executeBlockingInternal(Handler<Promise<T>> action, boolean ordered) {
+    return executeBlocking(this, action, internalBlockingPool, ordered ? internalOrderedTasks : null);
   }
 
   @Override
-  public <T> void executeBlocking(Handler<Promise<T>> blockingCodeHandler, TaskQueue queue, Handler<AsyncResult<T>> resultHandler) {
-    executeBlocking(this, blockingCodeHandler, resultHandler, workerPool, queue);
+  public <T> Future<T> executeBlocking(Handler<Promise<T>> blockingCodeHandler, boolean ordered) {
+    return executeBlocking(this, blockingCodeHandler, workerPool, ordered ? orderedTasks : null);
   }
 
-  static <T> void executeBlocking(ContextInternal context, Handler<Promise<T>> blockingCodeHandler,
-      Handler<AsyncResult<T>> resultHandler,
+  @Override
+  public <T> Future<T> executeBlocking(Handler<Promise<T>> blockingCodeHandler, TaskQueue queue) {
+    return executeBlocking(this, blockingCodeHandler, workerPool, queue);
+  }
+
+  static <T> Future<T> executeBlocking(ContextInternal context, Handler<Promise<T>> blockingCodeHandler,
       WorkerPool workerPool, TaskQueue queue) {
     PoolMetrics metrics = workerPool.metrics();
     Object queueMetric = metrics != null ? metrics.submitted() : null;
+    Promise<T> promise = context.promise();
+    Future<T> fut = promise.future();
     try {
       Runnable command = () -> {
         Object execMetric = null;
         if (metrics != null) {
           execMetric = metrics.begin(queueMetric);
         }
-        Promise<T> res = Promise.promise();
-        Future<T> fut = res.future();
-        context.dispatch(res, f -> {
+        context.dispatch(promise, f -> {
           try {
-            blockingCodeHandler.handle(res);
+            blockingCodeHandler.handle(promise);
           } catch (Throwable e) {
-            res.tryFail(e);
+            promise.tryFail(e);
           }
         });
         if (metrics != null) {
           metrics.end(execMetric, fut.succeeded());
         }
-        fut.setHandler(ar -> {
-          if (resultHandler != null) {
-            context.runOnContext(v -> resultHandler.handle(ar));
-          } else if (ar.failed()) {
-            context.reportException(ar.cause());
-          }
-        });
       };
       Executor exec = workerPool.executor();
       if (queue != null) {
@@ -196,6 +198,7 @@ abstract class ContextImpl extends AbstractContext {
       }
       throw e;
     }
+    return fut;
   }
 
   @Override
@@ -206,6 +209,11 @@ abstract class ContextImpl extends AbstractContext {
   @Override
   public ClassLoader classLoader() {
     return tccl;
+  }
+
+  @Override
+  public WorkerPool workerPool() {
+    return workerPool;
   }
 
   @Override
@@ -260,119 +268,36 @@ abstract class ContextImpl extends AbstractContext {
     return deployment.deploymentOptions().getInstances();
   }
 
-  static abstract class Duplicated<C extends ContextImpl> extends AbstractContext {
+  @Override
+  public final void runOnContext(Handler<Void> action) {
+    runOnContext(this, action);
+  }
 
-    protected final C delegate;
-    private final ContextInternal other;
-    private ConcurrentMap<Object, Object> localData;
+  abstract void runOnContext(AbstractContext ctx, Handler<Void> action);
 
-    public Duplicated(C delegate, ContextInternal other) {
-      this.delegate = delegate;
-      this.other = other;
-    }
+  @Override
+  public void execute(Runnable task) {
+    execute(this, task);
+  }
 
-    @Override
-    public VertxTracer tracer() {
-      return delegate.tracer();
-    }
+  abstract <T> void execute(AbstractContext ctx, Runnable task);
 
-    public final <T> void executeBlockingInternal(Handler<Promise<T>> action, Handler<AsyncResult<T>> resultHandler) {
-      ContextImpl.executeBlocking(this, action, resultHandler, delegate.internalBlockingPool, delegate.internalOrderedTasks);
-    }
+  @Override
+  public final <T> void execute(T argument, Handler<T> task) {
+    execute(this, argument, task);
+  }
 
-    @Override
-    public final <T> void executeBlocking(Handler<Promise<T>> blockingCodeHandler, boolean ordered, Handler<AsyncResult<T>> resultHandler) {
-      ContextImpl.executeBlocking(this, blockingCodeHandler, resultHandler, delegate.workerPool, ordered ? delegate.orderedTasks : null);
-    }
+  abstract <T> void execute(AbstractContext ctx, T argument, Handler<T> task);
 
-    @Override
-    public final <T> void executeBlocking(Handler<Promise<T>> blockingCodeHandler, TaskQueue queue, Handler<AsyncResult<T>> resultHandler) {
-      ContextImpl.executeBlocking(this, blockingCodeHandler, resultHandler, delegate.workerPool, queue);
-    }
+  @Override
+  public <T> void emit(T argument, Handler<T> task) {
+    emit(this, argument, task);
+  }
 
-    @Override
-    public final <T> void schedule(T value, Handler<T> task) {
-      delegate.schedule(value, task);
-    }
+  abstract <T> void emit(AbstractContext ctx, T argument, Handler<T> task);
 
-    @Override
-    public final String deploymentID() {
-      return delegate.deploymentID();
-    }
-
-    @Override
-    public final JsonObject config() {
-      return delegate.config();
-    }
-
-    @Override
-    public final int getInstanceCount() {
-      return delegate.getInstanceCount();
-    }
-
-    @Override
-    public final Context exceptionHandler(Handler<Throwable> handler) {
-      delegate.exceptionHandler(handler);
-      return this;
-    }
-
-    @Override
-    public final Handler<Throwable> exceptionHandler() {
-      return delegate.exceptionHandler();
-    }
-
-    @Override
-    public final void addCloseHook(Closeable hook) {
-      delegate.addCloseHook(hook);
-    }
-
-    @Override
-    public final boolean removeCloseHook(Closeable hook) {
-      return delegate.removeCloseHook(hook);
-    }
-
-    @Override
-    public final EventLoop nettyEventLoop() {
-      return delegate.nettyEventLoop();
-    }
-
-    @Override
-    public final Deployment getDeployment() {
-      return delegate.getDeployment();
-    }
-
-    @Override
-    public final VertxInternal owner() {
-      return delegate.owner();
-    }
-
-    @Override
-    public final ClassLoader classLoader() {
-      return delegate.classLoader();
-    }
-
-    @Override
-    public final void reportException(Throwable t) {
-      delegate.reportException(t);
-    }
-
-    @Override
-    public final ConcurrentMap<Object, Object> contextData() {
-      return delegate.contextData();
-    }
-
-    @Override
-    public final ConcurrentMap<Object, Object> localContextData() {
-      if (other == null) {
-        synchronized (this) {
-          if (localData == null) {
-            localData = new ConcurrentHashMap<>();
-          }
-          return localData;
-        }
-      } else {
-        return other.localContextData();
-      }
-    }
+  @Override
+  public final ContextInternal duplicate() {
+    return new DuplicatedContext(this);
   }
 }

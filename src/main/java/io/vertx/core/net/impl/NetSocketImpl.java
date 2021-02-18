@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -12,14 +12,12 @@
 package io.vertx.core.net.impl;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.Unpooled;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelOutboundHandler;
+import io.netty.channel.*;
 import io.netty.handler.ssl.SniHandler;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.util.CharsetUtil;
+import io.netty.util.ReferenceCounted;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -28,8 +26,6 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.eventbus.Message;
 import io.vertx.core.eventbus.MessageConsumer;
 import io.vertx.core.impl.ContextInternal;
-import io.vertx.core.impl.NetSocketInternal;
-import io.vertx.core.impl.VertxInternal;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.core.net.NetSocket;
@@ -55,13 +51,7 @@ import java.util.UUID;
  */
 public class NetSocketImpl extends ConnectionBase implements NetSocketInternal {
 
-  private static final Handler<Object> NULL_MSG_HANDLER = event -> {
-    if (event instanceof ByteBuf) {
-      ByteBuf byteBuf = (ByteBuf) event;
-      byteBuf.release();
-    }
-  };
-
+  private static final Handler<Object> DEFAULT_MSG_HANDLER = new InvalidMessageHandler();
   private static final Logger log = LoggerFactory.getLogger(NetSocketImpl.class);
 
   private final String writeHandlerID;
@@ -73,23 +63,21 @@ public class NetSocketImpl extends ConnectionBase implements NetSocketInternal {
   private Handler<Void> drainHandler;
   private MessageConsumer registration;
   private Handler<Object> messageHandler;
-  private boolean closed;
 
-  public NetSocketImpl(VertxInternal vertx, ChannelHandlerContext channel, ContextInternal context,
-                       SSLHelper helper, TCPMetrics metrics) {
-    this(vertx, channel, null, context, helper, metrics);
+  public NetSocketImpl(ContextInternal context, ChannelHandlerContext channel, SSLHelper helper, TCPMetrics metrics) {
+    this(context, channel, null, helper, metrics);
   }
 
-  public NetSocketImpl(VertxInternal vertx, ChannelHandlerContext channel, SocketAddress remoteAddress, ContextInternal context,
-                       SSLHelper helper, TCPMetrics metrics) {
-    super(vertx, channel, context);
+  public NetSocketImpl(ContextInternal context, ChannelHandlerContext channel, SocketAddress remoteAddress, SSLHelper helper, TCPMetrics metrics) {
+    super(context, channel);
     this.helper = helper;
     this.writeHandlerID = "__vertx.net." + UUID.randomUUID().toString();
     this.remoteAddress = remoteAddress;
     this.metrics = metrics;
-    this.messageHandler = NULL_MSG_HANDLER;
+    this.messageHandler = DEFAULT_MSG_HANDLER;
     pending = new InboundBuffer<>(context);
     pending.drainHandler(v -> doResume());
+    pending.exceptionHandler(context::reportException);
     pending.handler(obj -> {
       if (obj == InboundBuffer.END_SENTINEL) {
         Handler<Void> handler = endHandler();
@@ -121,25 +109,35 @@ public class NetSocketImpl extends ConnectionBase implements NetSocketInternal {
   }
 
   @Override
-  public synchronized NetSocketInternal writeMessage(Object message) {
-    if (closed) {
-      throw new IllegalStateException("Socket is closed");
-    }
-    writeToChannel(message);
-    return this;
+  public synchronized Future<Void> writeMessage(Object message) {
+    Promise<Void> promise = context.promise();
+    writeMessage(message, promise);
+    return promise.future();
   }
 
   @Override
   public NetSocketInternal writeMessage(Object message, Handler<AsyncResult<Void>> handler) {
-    writeToChannel(message, toPromise(handler));
+    writeToChannel(message, handler == null ? null : context.promise(handler));
     return this;
   }
 
   @Override
+  protected void reportsBytesWritten(Object msg) {
+    if (msg instanceof ByteBuf) {
+      reportBytesWritten(((ByteBuf)msg).readableBytes());
+    }
+  }
+
+  @Override
+  protected void reportBytesRead(Object msg) {
+    if (msg instanceof ByteBuf) {
+      reportBytesRead(((ByteBuf)msg).readableBytes());
+    }
+  }
+
+  @Override
   public Future<Void> write(Buffer data) {
-    Promise<Void> promise = Promise.promise();
-    write(data, promise);
-    return promise.future();
+    return writeMessage(data.getByteBuf());
   }
 
   @Override
@@ -149,16 +147,12 @@ public class NetSocketImpl extends ConnectionBase implements NetSocketInternal {
 
   @Override
   public Future<Void> write(String str) {
-    Promise<Void> promise = Promise.promise();
-    write(Unpooled.copiedBuffer(str, CharsetUtil.UTF_8), promise);
-    return promise.future();
+    return writeMessage(Unpooled.copiedBuffer(str, CharsetUtil.UTF_8));
   }
 
   @Override
   public Future<Void> write(String str, String enc) {
-    Promise<Void> promise = Promise.promise();
-    write(Unpooled.copiedBuffer(str, Charset.forName(enc)), promise);
-    return promise.future();
+    return writeMessage(Unpooled.copiedBuffer(str, Charset.forName(enc)));
   }
 
   @Override
@@ -180,7 +174,7 @@ public class NetSocketImpl extends ConnectionBase implements NetSocketInternal {
   @Override
   public synchronized NetSocket handler(Handler<Buffer> dataHandler) {
     if (dataHandler != null) {
-      messageHandler(new DataMessageHandler(channelHandlerContext().alloc(), dataHandler));
+      messageHandler(new DataMessageHandler(dataHandler));
     } else {
       messageHandler(null);
     }
@@ -243,6 +237,13 @@ public class NetSocketImpl extends ConnectionBase implements NetSocketInternal {
   }
 
   @Override
+  public Future<Void> sendFile(String filename, long offset, long length) {
+    Promise<Void> promise = context.promise();
+    sendFile(filename, offset, length, promise);
+    return promise.future();
+  }
+
+  @Override
   public NetSocket sendFile(String filename, long offset, long length, final Handler<AsyncResult<Void>> resultHandler) {
     File f = vertx.resolveFile(filename);
     if (f.isDirectory()) {
@@ -289,6 +290,20 @@ public class NetSocketImpl extends ConnectionBase implements NetSocketInternal {
   }
 
   @Override
+  public Future<Void> upgradeToSsl() {
+    Promise<Void> promise = context.promise();
+    upgradeToSsl(promise);
+    return promise.future();
+  }
+
+  @Override
+  public Future<Void> upgradeToSsl(String serverName) {
+    Promise<Void> promise = context.promise();
+    upgradeToSsl(serverName, promise);
+    return promise.future();
+  }
+
+  @Override
   public NetSocket upgradeToSsl(Handler<AsyncResult<Void>> handler) {
     return upgradeToSsl(null, handler);
   }
@@ -297,11 +312,19 @@ public class NetSocketImpl extends ConnectionBase implements NetSocketInternal {
   public NetSocket upgradeToSsl(String serverName, Handler<AsyncResult<Void>> handler) {
     ChannelOutboundHandler sslHandler = (ChannelOutboundHandler) chctx.pipeline().get("ssl");
     if (sslHandler == null) {
-      chctx.pipeline().addFirst("handshaker", new SslHandshakeCompletionHandler(ar -> {
+      ChannelPromise p = chctx.newPromise();
+      chctx.pipeline().addFirst("handshaker", new SslHandshakeCompletionHandler(p));
+      p.addListener(future -> {
         if (handler != null) {
-          context.executeFromIO(ar.mapEmpty(), handler);
+          AsyncResult<Void> res;
+          if (future.isSuccess()) {
+            res = Future.succeededFuture();
+          } else {
+            res = Future.failedFuture(future.cause());
+          }
+          context.emit(res, handler);
         }
-      }));
+      });
       if (remoteAddress != null) {
         sslHandler = new SslHandler(helper.createEngine(vertx, remoteAddress, serverName));
         ((SslHandler) sslHandler).setHandshakeTimeout(helper.getSslHandshakeTimeout(), helper.getSslHandshakeTimeoutUnit());
@@ -320,7 +343,7 @@ public class NetSocketImpl extends ConnectionBase implements NetSocketInternal {
 
   @Override
   protected void handleInterestedOpsChanged() {
-    context.dispatch(v -> callDrainHandler());
+    context.emit(null, v -> callDrainHandler());
   }
 
   @Override
@@ -337,14 +360,10 @@ public class NetSocketImpl extends ConnectionBase implements NetSocketInternal {
   protected void handleClosed() {
     MessageConsumer consumer;
     synchronized (this) {
-      if (closed) {
-        return;
-      }
-      closed = true;
       consumer = registration;
       registration = null;
     }
-    pending.write(InboundBuffer.END_SENTINEL);
+    context.emit(InboundBuffer.END_SENTINEL, pending::write);
     super.handleClosed();
     if (consumer != null) {
       consumer.unregister();
@@ -352,31 +371,41 @@ public class NetSocketImpl extends ConnectionBase implements NetSocketInternal {
   }
 
   public void handleMessage(Object msg) {
-    context.dispatch(msg, o -> {
-      if (!pending.write(msg)) {
+    if (msg instanceof ByteBuf) {
+      msg = VertxHandler.safeBuffer((ByteBuf) msg);
+    }
+    context.emit(msg, elt -> {
+      if (!pending.write(elt)) {
         doPause();
       }
     });
   }
 
-  private class DataMessageHandler implements Handler<Object> {
+  private static class DataMessageHandler implements Handler<Object> {
 
     private final Handler<Buffer> dataHandler;
-    private final ByteBufAllocator allocator;
 
-    DataMessageHandler(ByteBufAllocator allocator, Handler<Buffer> dataHandler) {
-      this.allocator = allocator;
+    DataMessageHandler(Handler<Buffer> dataHandler) {
       this.dataHandler = dataHandler;
     }
 
     @Override
-    public void handle(Object event) {
-      if (event instanceof ByteBuf) {
-        ByteBuf byteBuf = (ByteBuf) event;
-        byteBuf = VertxHandler.safeBuffer(byteBuf, allocator);
+    public void handle(Object msg) {
+      if (msg instanceof ByteBuf) {
+        ByteBuf byteBuf = (ByteBuf) msg;
         Buffer data = Buffer.buffer(byteBuf);
-        reportBytesRead(data.length());
         dataHandler.handle(data);
+      }
+    }
+  }
+
+  private static class InvalidMessageHandler implements Handler<Object> {
+    @Override
+    public void handle(Object msg) {
+      // ByteBuf are eagerly released when the message is processed
+      if (msg instanceof ReferenceCounted && (!(msg instanceof ByteBuf))) {
+        ReferenceCounted refCounter = (ReferenceCounted) msg;
+        refCounter.release();
       }
     }
   }

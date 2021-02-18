@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -14,16 +14,12 @@ package io.vertx.it;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.EventBus;
 import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpClientOptions;
-import io.vertx.core.http.HttpServerOptions;
-import io.vertx.core.http.HttpTestBase;
-import io.vertx.core.impl.VertxInternal;
+import io.vertx.core.http.HttpClientRequest;
+import io.vertx.core.http.HttpClientResponse;
+import io.vertx.core.http.HttpMethod;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
-import io.vertx.core.net.OpenSSLEngineOptions;
 import io.vertx.test.core.VertxTestBase;
-import io.vertx.test.tls.Cert;
-import io.vertx.test.tls.Trust;
 import org.junit.Test;
 
 import static io.vertx.core.http.HttpTestBase.DEFAULT_HTTP_HOST;
@@ -68,12 +64,13 @@ public class JsonTest extends VertxTestBase {
         req.response().end("hello");
       }).listen(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, onSuccess(s -> {
         HttpClient client = vertx.createHttpClient();
-        client.getNow(DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, "/", onSuccess(resp -> {
-          resp.exceptionHandler(this::fail);
-          resp.bodyHandler(body -> {
+        client.request(HttpMethod.GET, DEFAULT_HTTP_PORT, DEFAULT_HTTP_HOST, "/")
+          .compose(req -> req
+            .send()
+            .compose(HttpClientResponse::body))
+          .onComplete(onSuccess(body -> {
             assertEquals("hello", body.toString());
             testComplete();
-          });
         }));
       }));
       await();

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009 Red Hat, Inc. and others
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -17,5 +17,11 @@ package io.vertx.core.spi.logging;
  * @author <a href="kenny.macleod@kizoom.com">Kenny MacLeod</a>
  */
 public interface LogDelegateFactory {
+
+  /**
+   * @return whether the factory is available
+   */
+  boolean isAvailable();
+
   LogDelegate createDelegate(String name);
 }

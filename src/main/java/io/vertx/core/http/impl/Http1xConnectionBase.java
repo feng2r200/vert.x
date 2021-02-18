@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -12,11 +12,9 @@
 package io.vertx.core.http.impl;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelPromise;
+import io.netty.channel.FileRegion;
+import io.netty.handler.codec.http.HttpContent;
 import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.ContinuationWebSocketFrame;
@@ -24,11 +22,11 @@ import io.netty.handler.codec.http.websocketx.PingWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.PongWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
+import io.netty.handler.stream.ChunkedFile;
 import io.vertx.codegen.annotations.Nullable;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
-import io.vertx.core.Promise;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.GoAway;
 import io.vertx.core.http.Http2Settings;
@@ -36,8 +34,6 @@ import io.vertx.core.http.HttpConnection;
 import io.vertx.core.http.impl.ws.WebSocketFrameImpl;
 import io.vertx.core.http.impl.ws.WebSocketFrameInternal;
 import io.vertx.core.impl.ContextInternal;
-import io.vertx.core.impl.VertxInternal;
-import io.vertx.core.net.impl.ChannelFutureListenerAdapter;
 import io.vertx.core.net.impl.ConnectionBase;
 
 import static io.vertx.core.net.impl.VertxHandler.safeBuffer;
@@ -47,38 +43,25 @@ import static io.vertx.core.net.impl.VertxHandler.safeBuffer;
  */
 abstract class Http1xConnectionBase<S extends WebSocketImplBase<S>> extends ConnectionBase implements io.vertx.core.http.HttpConnection {
 
-  protected S ws;
-  private boolean closeFrameSent;
+  protected S webSocket;
 
-  Http1xConnectionBase(VertxInternal vertx, ChannelHandlerContext chctx, ContextInternal context) {
-    super(vertx, chctx, context);
+  Http1xConnectionBase(ContextInternal context, ChannelHandlerContext chctx) {
+    super(context, chctx);
   }
 
-  WebSocketFrame encodeFrame(WebSocketFrameImpl frame) {
-    ByteBuf buf = frame.getBinaryData();
-    if (buf != Unpooled.EMPTY_BUFFER) {
-      buf = safeBuffer(buf, chctx.alloc());
+  void handleWsFrame(WebSocketFrame msg) {
+    WebSocketFrameInternal frame = decodeFrame(msg);
+    WebSocketImplBase<?> w;
+    synchronized (this) {
+      w = webSocket;
     }
-    switch (frame.type()) {
-      case BINARY:
-        return new BinaryWebSocketFrame(frame.isFinal(), 0, buf);
-      case TEXT:
-        return new TextWebSocketFrame(frame.isFinal(), 0, buf);
-      case CLOSE:
-        return new CloseWebSocketFrame(true, 0, buf);
-      case CONTINUATION:
-        return new ContinuationWebSocketFrame(frame.isFinal(), 0, buf);
-      case PONG:
-        return new PongWebSocketFrame(buf);
-      case PING:
-        return new PingWebSocketFrame(buf);
-      default:
-        throw new IllegalStateException("Unsupported websocket msg " + frame);
+    if (w != null) {
+      w.context.execute(frame, w::handleFrame);
     }
   }
 
-  private WebSocketFrameInternal decodeFrame(WebSocketFrame msg) {
-    ByteBuf payload = safeBuffer(msg, chctx.alloc());
+  private WebSocketFrameInternal decodeFrame(io.netty.handler.codec.http.websocketx.WebSocketFrame msg) {
+    ByteBuf payload = safeBuffer(msg.content());
     boolean isFinal = msg.isFinalFragment();
     FrameType frameType;
     if (msg instanceof BinaryWebSocketFrame) {
@@ -94,77 +77,22 @@ abstract class Http1xConnectionBase<S extends WebSocketImplBase<S>> extends Conn
     } else if (msg instanceof ContinuationWebSocketFrame) {
       frameType = FrameType.CONTINUATION;
     } else {
-      throw new IllegalStateException("Unsupported websocket msg " + msg);
+      throw new IllegalStateException("Unsupported WebSocket msg " + msg);
     }
     return new WebSocketFrameImpl(frameType, payload, isFinal);
   }
 
-  void handleWsFrame(WebSocketFrame msg) {
-    WebSocketFrameInternal frame = decodeFrame(msg);
-    S w;
-    synchronized (this) {
-      switch (frame.type()) {
-        case PING:
-          // Echo back the content of the PING frame as PONG frame as specified in RFC 6455 Section 5.5.2
-          chctx.writeAndFlush(new PongWebSocketFrame(frame.getBinaryData().copy()));
-          break;
-        case CLOSE:
-          synchronized (this) {
-            if (!closeFrameSent) {
-              // Echo back close frame and close the connection once it was written.
-              // This is specified in the WebSockets RFC 6455 Section  5.4.1
-              CloseWebSocketFrame closeFrame = new CloseWebSocketFrame(frame.closeStatusCode(), frame.closeReason());
-              chctx.writeAndFlush(closeFrame).addListener(ChannelFutureListener.CLOSE);
-              closeFrameSent = true;
-            }
-          }
-          break;
-      }
-      w = ws;
-    }
-    if (w != null) {
-      w.context.dispatch(frame, ((WebSocketImplBase)w)::handleFrame);
-    }
-  }
-
   @Override
   public Future<Void> close() {
-    Promise<Void> promise = Promise.promise();
-    close(promise);
-    return promise.future();
-  }
-
-  @Override
-  public void close(Handler<AsyncResult<Void>> handler) {
-    closeWithPayload((short) 1000, null, handler);
-  }
-
-  void closeWithPayload(short code, String reason, Handler<AsyncResult<Void>> handler) {
-    if (ws == null) {
-      super.close(handler);
+    S sock;
+    synchronized (this) {
+      sock = webSocket;
+    }
+    if (sock == null) {
+      return super.close();
     } else {
-      // make sure everything is flushed out on close
-      ByteBuf byteBuf = HttpUtils.generateWSCloseFrameByteBuf(code, reason);
-      CloseWebSocketFrame frame = new CloseWebSocketFrame(true, 0, byteBuf);
-      ChannelPromise promise = chctx.newPromise();
-      flush(promise);
-      // close the WebSocket connection by sending a close frame with specified payload.
-      promise.addListener((ChannelFutureListener) future -> {
-        ChannelFuture fut = chctx.writeAndFlush(frame);
-        boolean server = this instanceof Http1xServerConnection;
-        if (server) {
-          fut.addListener((ChannelFutureListener) f -> {
-            ChannelFuture closeFut = chctx.channel().close();
-            if (handler != null) {
-              closeFut.addListener(new ChannelFutureListenerAdapter<>(context, null, handler));
-            }
-          });
-        } else {
-          if (handler != null) {
-            fut.addListener(new ChannelFutureListenerAdapter<>(context, null, handler));
-          }
-        }
-      });
+      sock.close();
+      return closeFuture();
     }
   }
 
@@ -194,12 +122,12 @@ abstract class Http1xConnectionBase<S extends WebSocketImplBase<S>> extends Conn
   }
 
   @Override
-  public HttpConnection shutdown() {
+  public void shutdown(long timeout, Handler<AsyncResult<Void>> handler) {
     throw new UnsupportedOperationException("HTTP/1.x connections don't support GOAWAY");
   }
 
   @Override
-  public HttpConnection shutdown(long timeoutMs) {
+  public Future<Void> shutdown(long timeoutMs) {
     throw new UnsupportedOperationException("HTTP/1.x connections don't support GOAWAY");
   }
 
@@ -241,5 +169,40 @@ abstract class Http1xConnectionBase<S extends WebSocketImplBase<S>> extends Conn
   @Override
   public Future<Buffer> ping(Buffer data) {
     throw new UnsupportedOperationException("HTTP/1.x connections don't support PING");
+  }
+
+  @Override
+  protected void reportsBytesWritten(Object msg) {
+    long size = sizeOf(msg);
+    reportBytesWritten(size);
+  }
+
+  @Override
+  protected void reportBytesRead(Object msg) {
+    long size = sizeOf(msg);
+    reportBytesRead(size);
+  }
+
+  static long sizeOf(WebSocketFrame obj) {
+    return obj.content().readableBytes();
+  }
+
+  static long sizeOf(Object obj) {
+    if (obj instanceof Buffer) {
+      return ((Buffer) obj).length();
+    } else if (obj instanceof ByteBuf) {
+      return ((ByteBuf) obj).readableBytes();
+    } else if (obj instanceof HttpContent) {
+      return ((HttpContent) obj).content().readableBytes();
+    } else if (obj instanceof WebSocketFrame) {
+      return sizeOf((WebSocketFrame) obj);
+    } else if (obj instanceof FileRegion) {
+      return ((FileRegion) obj).count();
+    } else if (obj instanceof ChunkedFile) {
+      ChunkedFile file = (ChunkedFile) obj;
+      return file.endOffset() - file.startOffset();
+    } else {
+      return 0L;
+    }
   }
 }

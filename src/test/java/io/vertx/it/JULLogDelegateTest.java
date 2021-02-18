@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -27,21 +27,21 @@ import static org.junit.Assert.*;
  *
  * @author <a href="http://escoffier.me">Clement Escoffier</a>
  */
+@SuppressWarnings("deprecation")
 public class JULLogDelegateTest {
 
+  private static Logger logger;
   private static Recording recording;
 
   @BeforeClass
   public static void initialize() throws IOException {
-    // Clear value.
-    System.clearProperty("vertx.logger-delegate-factory-class-name");
-    LoggerFactory.initialise();
+    // Init logging before recording add its own logging handler
+    logger = LoggerFactory.getLogger("my-jul-logger");
     recording = new Recording();
   }
 
   @Test
   public void testDelegateUnwrap() {
-    Logger logger = LoggerFactory.getLogger("my-jul-logger");
     LogDelegate delegate = logger.getDelegate();
     assertNotNull("Delegate is null", delegate);
     try {

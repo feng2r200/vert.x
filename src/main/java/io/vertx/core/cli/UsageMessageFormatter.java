@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -377,7 +377,7 @@ public class UsageMessageFormatter {
         StringBuilder buf = new StringBuilder();
         buf.append(lpad).append("   ").append(command.getName());
         prefixList.add(buf);
-        max = buf.length() > max ? buf.length() : max;
+        max = Math.max(buf.length(), max);
       }
     }
 
@@ -469,7 +469,7 @@ public class UsageMessageFormatter {
         }
       }
       prefixList.add(buf);
-      max = buf.length() > max ? buf.length() : max;
+      max = Math.max(buf.length(), max);
     }
 
     for (Argument argument : arguments) {
@@ -480,7 +480,7 @@ public class UsageMessageFormatter {
       buf.append(lpad).append("<").append(argument.getArgName()).append(">");
 
       prefixList.add(buf);
-      max = buf.length() > max ? buf.length() : max;
+      max = Math.max(buf.length(), max);
     }
 
     int x = 0;
@@ -602,8 +602,7 @@ public class UsageMessageFormatter {
    * @param text            The text to be rendered.
    */
   public Appendable renderWrappedTextBlock(StringBuilder sb, int width, int nextLineTabStop, String text) {
-    try {
-      BufferedReader in = new BufferedReader(new StringReader(text));
+    try (BufferedReader in = new BufferedReader(new StringReader(text))) {
       String line;
       boolean firstLine = true;
       while ((line = in.readLine()) != null) {

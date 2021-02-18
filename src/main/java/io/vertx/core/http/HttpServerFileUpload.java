@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -13,6 +13,8 @@ package io.vertx.core.http;
 
 import io.vertx.codegen.annotations.Fluent;
 import io.vertx.codegen.annotations.VertxGen;
+import io.vertx.core.AsyncResult;
+import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.file.AsyncFile;
@@ -49,8 +51,25 @@ public interface HttpServerFileUpload extends ReadStream<Buffer> {
    *
    * @param filename  the name of the file
    */
-  @Fluent
-  HttpServerFileUpload streamToFileSystem(String filename);
+  void streamToFileSystem(String filename, Handler<AsyncResult<Void>> handler);
+
+  /**
+   * Stream the content of this upload to the given file on storage.
+   *
+   * <p> If the stream has a failure or is cancelled the created file will be deleted.
+   *
+   * @param filename  the name of the file
+   */
+  Future<Void> streamToFileSystem(String filename);
+
+  /**
+   * Try to cancel the file system streaming, the streamed file will be deleted.
+   *
+   *
+   * @return {@code true} when the stream is cancelled, otherwise it means that stream is finished
+   * @throws IllegalStateException when no stream is in progress
+   */
+  boolean cancelStreamToFileSystem() throws IllegalStateException;
 
   /**
    * @return the filename which was used when upload the file.
@@ -91,7 +110,7 @@ public interface HttpServerFileUpload extends ReadStream<Buffer> {
   boolean isSizeAvailable();
 
   /**
-   * @return the async uploaded file when {@link #streamToFileSystem} has been used
+   * @return the async uploaded file when {@link #streamToFileSystem} has been used and the file is available
    */
   AsyncFile file();
 }

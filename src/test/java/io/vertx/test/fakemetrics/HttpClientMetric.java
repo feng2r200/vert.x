@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -11,10 +11,11 @@
 
 package io.vertx.test.fakemetrics;
 
-import io.vertx.core.http.HttpClientRequest;
+import io.vertx.core.spi.observability.HttpRequest;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * @author <a href="mailto:julien@julienviet.com">Julien Viet</a>
@@ -22,15 +23,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class HttpClientMetric {
 
   public final EndpointMetric endpoint;
-  public final HttpClientRequest request;
-  public final SocketMetric socket;
+  public final HttpRequest request;
   public final AtomicInteger requestEnded = new AtomicInteger();
   public final AtomicInteger responseBegin = new AtomicInteger();
+  public final AtomicLong bytesRead = new AtomicLong();
+  public final AtomicLong bytesWritten = new AtomicLong();
   public final AtomicBoolean failed = new AtomicBoolean();
 
-  public HttpClientMetric(EndpointMetric endpoint, HttpClientRequest request, SocketMetric socket) {
+  public HttpClientMetric(EndpointMetric endpoint, HttpRequest request) {
     this.endpoint = endpoint;
     this.request = request;
-    this.socket = socket;
   }
 }

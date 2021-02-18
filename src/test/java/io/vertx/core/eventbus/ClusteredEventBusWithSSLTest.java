@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -16,8 +16,6 @@ import io.vertx.core.http.ClientAuth;
 import io.vertx.core.http.Http1xTest;
 import io.vertx.test.tls.Cert;
 import io.vertx.test.tls.Trust;
-import org.junit.Ignore;
-import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -85,12 +83,4 @@ public class ClusteredEventBusWithSSLTest extends ClusteredEventBusTestBase {
   protected void startNodes(int numNodes) {
     super.startNodes(numNodes, new VertxOptions().setEventBusOptions(options));
   }
-
-  @Test
-  @Ignore
-  @Override
-  public void testSendWhileUnsubscribing() throws Exception {
-    // This test can fail if CPU is busy, so avoid it with EventBus SSL
-  }
-
 }

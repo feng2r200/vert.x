@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -26,6 +26,7 @@ import io.vertx.core.net.NetServerOptions;
 import io.vertx.core.net.impl.PartialPooledByteBufAllocator;
 import io.vertx.core.net.impl.SocketAddressImpl;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.net.SocketAddress;
@@ -106,12 +107,13 @@ public class Transport {
     return null;
   }
 
-  public SocketAddress convert(io.vertx.core.net.SocketAddress address, boolean resolved) {
-    if (address.path() != null) {
+  public SocketAddress convert(io.vertx.core.net.SocketAddress address) {
+    if (address.isDomainSocket()) {
       throw new IllegalArgumentException("Domain socket not supported by JDK transport");
     } else {
-      if (resolved) {
-        return new InetSocketAddress(address.host(), address.port());
+      InetAddress ip = ((SocketAddressImpl) address).ipAddress();
+      if (ip != null) {
+        return new InetSocketAddress(ip, address.port());
       } else {
         return InetSocketAddress.createUnresolved(address.host(), address.port());
       }
@@ -120,7 +122,7 @@ public class Transport {
 
   public io.vertx.core.net.SocketAddress convert(SocketAddress address) {
     if (address instanceof InetSocketAddress) {
-      return new SocketAddressImpl((InetSocketAddress) address);
+      return io.vertx.core.net.SocketAddress.inetSocketAddress((InetSocketAddress) address);
     } else {
       return null;
     }

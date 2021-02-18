@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -33,7 +33,7 @@ class MessageTagExtractor implements TagExtractor<Message<?>> {
   @Override
   public String name(Message<?> obj, int index) {
     if (index == 0) {
-      return "peer.service";
+      return "message_bus.destination";
     }
     throw new IndexOutOfBoundsException("Invalid tag index " + index);
   }

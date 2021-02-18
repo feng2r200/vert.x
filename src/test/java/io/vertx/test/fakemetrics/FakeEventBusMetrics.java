@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -11,6 +11,7 @@
 
 package io.vertx.test.fakemetrics;
 
+import io.vertx.core.eventbus.Message;
 import io.vertx.core.eventbus.ReplyFailure;
 import io.vertx.core.spi.metrics.EventBusMetrics;
 
@@ -97,17 +98,15 @@ public class FakeEventBusMetrics extends FakeMetricsBase implements EventBusMetr
   }
 
   @Override
-  public void beginHandleMessage(HandlerMetric handler, boolean local) {
-    handler.beginCount.incrementAndGet();
-    if (local) {
-      handler.localBeginCount.incrementAndGet();
-    }
+  public void discardMessage(HandlerMetric handler, boolean local, Message<?> msg) {
+    handler.discardCount.incrementAndGet();
   }
 
-  public void endHandleMessage(HandlerMetric handler, Throwable failure) {
-    handler.endCount.incrementAndGet();
-    if (failure != null) {
-      handler.failureCount.incrementAndGet();
+  @Override
+  public void messageDelivered(HandlerMetric handler, boolean local) {
+    handler.deliveredCount.incrementAndGet();
+    if (local) {
+      handler.localDeliveredCount.incrementAndGet();
     }
   }
 

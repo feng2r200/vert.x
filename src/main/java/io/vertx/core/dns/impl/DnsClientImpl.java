@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -16,13 +16,15 @@ import io.netty.channel.socket.DatagramChannel;
 import io.netty.channel.socket.InternetProtocolFamily;
 import io.netty.handler.codec.dns.*;
 import io.netty.handler.logging.LoggingHandler;
-import io.netty.util.collection.IntObjectHashMap;
-import io.netty.util.collection.IntObjectMap;
+import io.netty.util.collection.LongObjectHashMap;
+import io.netty.util.collection.LongObjectMap;
+import io.vertx.codegen.annotations.Nullable;
 import io.vertx.core.*;
 import io.vertx.core.dns.*;
 import io.vertx.core.dns.DnsResponseCode;
 import io.vertx.core.dns.impl.decoder.RecordDecoder;
 import io.vertx.core.impl.ContextInternal;
+import io.vertx.core.impl.future.PromiseInternal;
 import io.vertx.core.impl.VertxInternal;
 import io.vertx.core.net.impl.PartialPooledByteBufAllocator;
 import io.vertx.core.net.impl.transport.Transport;
@@ -44,8 +46,8 @@ public final class DnsClientImpl implements DnsClient {
 
   private static final char[] HEX_TABLE = "0123456789abcdef".toCharArray();
 
-  private final Vertx vertx;
-  private final IntObjectMap<Query> inProgressMap = new IntObjectHashMap<>();
+  private final VertxInternal vertx;
+  private final LongObjectMap<Query> inProgressMap = new LongObjectHashMap<>();
   private final InetSocketAddress dnsServer;
   private final ContextInternal actualCtx;
   private final DatagramChannel channel;
@@ -61,7 +63,7 @@ public final class DnsClientImpl implements DnsClient {
 
     this.dnsServer = new InetSocketAddress(options.getHost(), options.getPort());
     if (this.dnsServer.isUnresolved()) {
-    	throw new IllegalArgumentException("Cannot resolve the host to a valid ip address");
+      throw new IllegalArgumentException("Cannot resolve the host to a valid ip address");
     }
     this.vertx = vertx;
 
@@ -81,8 +83,8 @@ public final class DnsClientImpl implements DnsClient {
     channel.pipeline().addLast(new SimpleChannelInboundHandler<DnsResponse>() {
       @Override
       protected void channelRead0(ChannelHandlerContext ctx, DnsResponse msg) throws Exception {
-        int id = msg.id();
-        Query query = inProgressMap.get(id);
+        DefaultDnsQuestion question = msg.recordAt(DnsSection.QUESTION);
+        Query query = inProgressMap.get(dnsMessageId(msg.id(), question.name()));
         if (query != null) {
           query.handle(msg);
         }
@@ -92,90 +94,133 @@ public final class DnsClientImpl implements DnsClient {
 
   @Override
   public DnsClient lookup4(String name, Handler<AsyncResult<String>> handler) {
-    lookupSingle(name, handler, DnsRecordType.A);
+    lookup4(name).onComplete(handler);
     return this;
+  }
+
+  @Override
+  public Future<@Nullable String> lookup4(String name) {
+    return lookupSingle(name, DnsRecordType.A);
   }
 
   @Override
   public DnsClient lookup6(String name, Handler<AsyncResult<String>> handler) {
-    lookupSingle(name, handler, DnsRecordType.AAAA);
+    lookup6(name).onComplete(handler);
     return this;
+  }
+
+  @Override
+  public Future<@Nullable String> lookup6(String name) {
+    return lookupSingle(name, DnsRecordType.AAAA);
   }
 
   @Override
   public DnsClient lookup(String name, Handler<AsyncResult<String>> handler) {
-    lookupSingle(name, handler, DnsRecordType.A, DnsRecordType.AAAA);
+    lookup(name).onComplete(handler);
     return this;
+  }
+
+  @Override
+  public Future<@Nullable String> lookup(String name) {
+    return lookupSingle(name, DnsRecordType.A, DnsRecordType.AAAA);
   }
 
   @Override
   public DnsClient resolveA(String name, Handler<AsyncResult<List<String>>> handler) {
-    lookupList(name, handler, DnsRecordType.A);
+    resolveA(name).onComplete(handler);
     return this;
+  }
+
+  @Override
+  public Future<List<String>> resolveA(String name) {
+    return lookupList(name, DnsRecordType.A);
   }
 
   @Override
   public DnsClient resolveCNAME(String name, Handler<AsyncResult<List<String> >> handler) {
-    lookupList(name, handler, DnsRecordType.CNAME);
+    resolveCNAME(name).onComplete(handler);
     return this;
+  }
+
+  @Override
+  public Future<List<String>> resolveCNAME(String name) {
+    return lookupList(name, DnsRecordType.CNAME);
   }
 
   @Override
   public DnsClient resolveMX(String name, Handler<AsyncResult<List<MxRecord>>> handler) {
-    lookupList(name, handler, DnsRecordType.MX);
+    resolveMX(name).onComplete(handler);
     return this;
+  }
+
+  @Override
+  public Future<List<MxRecord>> resolveMX(String name) {
+    return lookupList(name, DnsRecordType.MX);
+  }
+
+  @Override
+  public Future<List<String>> resolveTXT(String name) {
+    return this.<List<String>>lookupList(name, DnsRecordType.TXT).map(records -> {
+      List<String> txts = new ArrayList<>();
+      for (List<String> txt: records) {
+        txts.addAll(txt);
+      }
+      return txts;
+    });
   }
 
   @Override
   public DnsClient resolveTXT(String name, Handler<AsyncResult<List<String>>> handler) {
-    lookupList(name, new Handler<AsyncResult<List<String>>>() {
-      @SuppressWarnings("unchecked")
-      @Override
-      public void handle(AsyncResult event) {
-        if (event.failed()) {
-          handler.handle(event);
-        } else {
-          List<String> txts = new ArrayList<>();
-          List<List<String>> records = (List<List<String>>) event.result();
-          for (List<String> txt: records) {
-            txts.addAll(txt);
-          }
-          handler.handle(Future.succeededFuture(txts));
-        }
-      }
-    }, DnsRecordType.TXT);
+    resolveTXT(name).onComplete(handler);
     return this;
   }
 
   @Override
+  public Future<@Nullable String> resolvePTR(String name) {
+    return lookupSingle(name, DnsRecordType.PTR);
+  }
+
+  @Override
   public DnsClient resolvePTR(String name, Handler<AsyncResult<String>> handler) {
-    lookupSingle(name, handler, DnsRecordType.PTR);
+    resolvePTR(name).onComplete(handler);
     return this;
   }
 
   @Override
   public DnsClient resolveAAAA(String name, Handler<AsyncResult<List<String>>> handler) {
-    lookupList(name, handler, DnsRecordType.AAAA);
+    resolveAAAA(name).onComplete(handler);
     return this;
+  }
+
+  @Override
+  public Future<List<String>> resolveAAAA(String name) {
+    return lookupList(name, DnsRecordType.AAAA);
+  }
+
+  @Override
+  public Future<List<String>> resolveNS(String name) {
+    return lookupList(name, DnsRecordType.NS);
   }
 
   @Override
   public DnsClient resolveNS(String name, Handler<AsyncResult<List<String>>> handler) {
-    lookupList(name, handler, DnsRecordType.NS);
+    resolveNS(name).onComplete(handler);
     return this;
+  }
+
+  @Override
+  public Future<List<SrvRecord>> resolveSRV(String name) {
+    return lookupList(name, DnsRecordType.SRV);
   }
 
   @Override
   public DnsClient resolveSRV(String name, Handler<AsyncResult<List<SrvRecord>>> handler) {
-    lookupList(name, handler, DnsRecordType.SRV);
+    resolveSRV(name).onComplete(handler);
     return this;
   }
 
   @Override
-  public DnsClient reverseLookup(String address, Handler<AsyncResult<String>> handler) {
-    // TODO:  Check if the given address is a valid ip address before pass it to InetAddres.getByName(..)
-    //        This is need as otherwise it may try to perform a DNS lookup.
-    //        An other option would be to change address to be of type InetAddress.
+  public Future<@Nullable String> reverseLookup(String address) {
     try {
       InetAddress inetAddress = InetAddress.getByName(address);
       byte[] addr = inetAddress.getAddress();
@@ -184,9 +229,9 @@ public final class DnsClientImpl implements DnsClient {
       if (inetAddress instanceof Inet4Address) {
         // reverse ipv4 address
         reverseName.append(addr[3] & 0xff).append(".")
-                .append(addr[2]& 0xff).append(".")
-                .append(addr[1]& 0xff).append(".")
-                .append(addr[0]& 0xff);
+          .append(addr[2]& 0xff).append(".")
+          .append(addr[1]& 0xff).append(".")
+          .append(addr[0]& 0xff);
       } else {
         // It is an ipv 6 address time to reverse it
         for (int i = 0; i < 16; i++) {
@@ -200,30 +245,42 @@ public final class DnsClientImpl implements DnsClient {
       }
       reverseName.append(".in-addr.arpa");
 
-      return resolvePTR(reverseName.toString(), handler);
+      return resolvePTR(reverseName.toString());
     } catch (UnknownHostException e) {
       // Should never happen as we work with ip addresses as input
       // anyway just in case notify the handler
-      actualCtx.runOnContext((v) -> handler.handle(Future.failedFuture(e)));
+      return Future.failedFuture(e);
     }
+  }
+
+  @Override
+  public DnsClient reverseLookup(String address, Handler<AsyncResult<String>> handler) {
+    reverseLookup(address).onComplete(handler);
     return this;
   }
 
-  private <T> void lookupSingle(String name, Handler<AsyncResult<T>> handler, DnsRecordType... types) {
-    this.<T>lookupList(name, ar -> handler.handle(ar.map(result -> result.isEmpty() ? null : result.get(0))), types);
+  private <T> Future<T> lookupSingle(String name, DnsRecordType... types) {
+    return this.<T>lookupList(name, types).map(result -> result.isEmpty() ? null : result.get(0));
   }
 
   @SuppressWarnings("unchecked")
-  private <T> void lookupList(String name, Handler<AsyncResult<List<T>>> handler, DnsRecordType... types) {
+  private <T> Future<List<T>> lookupList(String name, DnsRecordType... types) {
+    ContextInternal ctx = vertx.getOrCreateContext();
+    PromiseInternal<List<T>> promise = ctx.promise();
     Objects.requireNonNull(name, "no null name accepted");
     EventLoop el = actualCtx.nettyEventLoop();
+    Query query = new Query(name, types);
+    query.promise.addListener(promise);
     if (el.inEventLoop()) {
-      new Query(name, types, handler).run();
+      query.run();
     } else {
-      el.execute(() -> {
-        new Query(name, types, handler).run();
-      });
+      el.execute(query::run);
     }
+    return promise.future();
+  }
+
+  private long dnsMessageId(int id, String query) {
+    return ((long) query.hashCode() << 16) + (id & 65535);
   }
 
   // Testing purposes
@@ -236,35 +293,36 @@ public final class DnsClientImpl implements DnsClient {
   private class Query<T> {
 
     final DatagramDnsQuery msg;
-    final Promise<List<T>> promise;
+    final io.netty.util.concurrent.Promise<List<T>> promise;
     final String name;
     final DnsRecordType[] types;
     long timerID;
 
-    public Query(String name, DnsRecordType[] types, Handler<AsyncResult<List<T>>> handler) {
-      Promise<List<T>> promise = Promise.promise();
-      promise.future().setHandler(handler);
+    public Query(String name, DnsRecordType[] types) {
       this.msg = new DatagramDnsQuery(null, dnsServer, ThreadLocalRandom.current().nextInt()).setRecursionDesired(options.isRecursionDesired());
+      if (!name.endsWith(".")) {
+        name += ".";
+      }
       for (DnsRecordType type: types) {
         msg.addRecord(DnsSection.QUESTION, new DefaultDnsQuestion(name, type, DnsRecord.CLASS_IN));
       }
-      this.promise = promise;
+      this.promise = actualCtx.nettyEventLoop().newPromise();
       this.types = types;
       this.name = name;
     }
 
     private void fail(Throwable cause) {
-      inProgressMap.remove(msg.id());
+      inProgressMap.remove(dnsMessageId(msg.id(), name));
       if (timerID >= 0) {
         vertx.cancelTimer(timerID);
       }
-      promise.tryFail(cause);
+      promise.setFailure(cause);
     }
 
     void handle(DnsResponse msg) {
       DnsResponseCode code = DnsResponseCode.valueOf(msg.code().intValue());
       if (code == DnsResponseCode.NOERROR) {
-        inProgressMap.remove(msg.id());
+        inProgressMap.remove(dnsMessageId(msg.id(), name));
         if (timerID >= 0) {
           vertx.cancelTimer(timerID);
         }
@@ -280,16 +338,14 @@ public final class DnsClientImpl implements DnsClient {
         if (records.size() > 0 && (records.get(0) instanceof MxRecordImpl || records.get(0) instanceof SrvRecordImpl)) {
           Collections.sort((List) records);
         }
-        actualCtx.executeFromIO(v -> {
-          promise.tryComplete(records);
-        });
+        promise.setSuccess(records);
       } else {
-        actualCtx.executeFromIO(new DnsException(code), this::fail);
+        fail(new DnsException(code));
       }
     }
 
     void run() {
-      inProgressMap.put(msg.id(), this);
+      inProgressMap.put(dnsMessageId(msg.id(), name), this);
       timerID = vertx.setTimer(options.getQueryTimeout(), id -> {
         timerID = -1;
         actualCtx.runOnContext(v -> {
@@ -298,7 +354,7 @@ public final class DnsClientImpl implements DnsClient {
       });
       channel.writeAndFlush(msg).addListener((ChannelFutureListener) future -> {
         if (!future.isSuccess()) {
-          actualCtx.executeFromIO(future.cause(), this::fail);
+          actualCtx.emit(future.cause(), this::fail);
         }
       });
     }

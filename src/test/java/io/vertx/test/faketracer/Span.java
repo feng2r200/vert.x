@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2018 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -11,6 +11,8 @@
 
 package io.vertx.test.faketracer;
 
+import io.vertx.core.spi.tracing.SpanKind;
+
 import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,6 +22,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * @author Pavol Loffay
  */
 public class Span {
+
+  public final SpanKind kind;
   public final int traceId;
   public final int parentId;
   public final int id;
@@ -28,7 +32,8 @@ public class Span {
   private AtomicBoolean finished = new AtomicBoolean();
   private final Map<String, String> tags = new ConcurrentHashMap<>();
 
-  Span(FakeTracer tracer, int traceId, int parentId, int id, String operation) {
+  Span(FakeTracer tracer, SpanKind kind, int traceId, int parentId, int id, String operation) {
+    this.kind = kind;
     this.tracer = tracer;
     this.traceId = traceId;
     this.parentId = parentId;
@@ -40,12 +45,8 @@ public class Span {
     return Collections.unmodifiableMap(tags);
   }
 
-  public Span createChild() {
-    return createChild(null);
-  }
-
-  public Span createChild(String operation) {
-    return new Span(tracer, traceId, id, tracer.nextId(), operation);
+  public Span createChild(SpanKind kind, String operation) {
+    return new Span(tracer, kind, traceId, id, tracer.nextId(), operation);
   }
 
   public void addTag(String key, String value) {
@@ -64,11 +65,11 @@ public class Span {
   @Override
   public boolean equals(Object obj) {
     Span span = (Span) obj;
-    return span.traceId == traceId && span.parentId == parentId && span.id == id;
+    return span.kind == kind && span.traceId == traceId && span.parentId == parentId && span.id == id;
   }
 
   @Override
   public String toString() {
-    return "Span[traceId=" + traceId + ",parentId=" + parentId + ",id=" + id + "]";
+    return "Span[kind=" + kind.name() + ",traceId=" + traceId + ",parentId=" + parentId + ",id=" + id + "]";
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2017 Contributors to the Eclipse Foundation
+ * Copyright (c) 2011-2019 Contributors to the Eclipse Foundation
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -14,8 +14,6 @@ package io.vertx.core.impl;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 
-import java.util.concurrent.ConcurrentMap;
-
 /**
  * @author <a href="mailto:julien@julienviet.com">Julien Viet</a>
  */
@@ -23,26 +21,46 @@ public class BenchmarkContext extends ContextImpl {
 
   public static BenchmarkContext create(Vertx vertx) {
     VertxImpl impl = (VertxImpl) vertx;
-    return new BenchmarkContext(impl, impl.internalBlockingPool, impl.workerPool, null, Thread.currentThread().getContextClassLoader());
+    return new BenchmarkContext(
+      impl,
+      impl.internalWorkerPool,
+      impl.workerPool,
+      Thread.currentThread().getContextClassLoader()
+    );
   }
 
-  public BenchmarkContext(VertxInternal vertx, WorkerPool internalBlockingPool, WorkerPool workerPool, Deployment deployment, ClassLoader tccl) {
-    super(vertx, null, internalBlockingPool, workerPool, deployment, tccl);
-  }
-
-  @Override
-  void executeAsync(Handler<Void> task) {
-    execute(null, task);
-  }
-
-  @Override
-  protected <T> void execute(T value, Handler<T> task) {
-    dispatch(value, task);
+  public BenchmarkContext(VertxInternal vertx, WorkerPool internalBlockingPool, WorkerPool workerPool, ClassLoader tccl) {
+    super(vertx, null, vertx.getEventLoopGroup().next(), internalBlockingPool, workerPool, null, null, tccl);
   }
 
   @Override
-  public <T> void schedule(T value, Handler<T> task) {
-    task.handle(value);
+  boolean inThread() {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  <T> void emit(AbstractContext ctx, T argument, Handler<T> task) {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  void runOnContext(AbstractContext ctx, Handler<Void> action) {
+    ctx.dispatch(null, action);
+  }
+
+  @Override
+  <T> void execute(AbstractContext ctx, T argument, Handler<T> task) {
+    task.handle(argument);
+  }
+
+  @Override
+  <T> void execute(AbstractContext ctx, Runnable task) {
+    task.run();
+  }
+
+  @Override
+  public void execute(Runnable task) {
+    task.run();
   }
 
   @Override
@@ -50,8 +68,4 @@ public class BenchmarkContext extends ContextImpl {
     return false;
   }
 
-  @Override
-  public ContextInternal duplicate(ContextInternal in) {
-    throw new UnsupportedOperationException();
-  }
 }
